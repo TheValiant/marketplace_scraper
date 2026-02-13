@@ -3,6 +3,7 @@
 """Terminal UI for the ecom_search price comparison engine."""
 
 import asyncio
+import logging
 import webbrowser
 
 from rich.text import Text
@@ -22,6 +23,8 @@ from textual.widgets import (
 from src.scrapers.amazon_scraper import AmazonScraper
 from src.scrapers.noon_scraper import NoonScraper
 from src.storage.file_manager import FileManager
+
+logger = logging.getLogger("ecom_search.ui")
 
 
 class EcomSearchApp(App):
@@ -128,6 +131,12 @@ class EcomSearchApp(App):
             if isinstance(batch, list):
                 self.products.extend(batch)
             elif isinstance(batch, Exception):
+                logger.error(
+                    "Scraper returned exception for query '%s': %s",
+                    query,
+                    batch,
+                    exc_info=batch,
+                )
                 self.notify(f"Error: {batch}", severity="error")
 
         self.populate_table()
@@ -179,11 +188,18 @@ class EcomSearchApp(App):
 
     def action_save(self) -> None:
         """Save current results to a JSON file."""
-        if self.products:
+        if not self.products:
+            self.notify("No results to save", severity="warning")
+            return
+        try:
             path = self.file_manager.save_results(
                 self.current_query, self.products, "combined"
             )
+            logger.info("Results saved to %s", path)
             self.notify(f"Saved to {path}")
+        except Exception as e:
+            logger.error("Failed to save results", exc_info=True)
+            self.notify(f"Save failed: {e}", severity="error")
 
     def action_copy_url(self) -> None:
         """Copy the selected product's URL to the clipboard."""
@@ -194,4 +210,5 @@ class EcomSearchApp(App):
             pyperclip.copy(self.products[row].url)
             self.notify("URL Copied")
         except Exception:
+            logger.error("Failed to copy URL to clipboard", exc_info=True)
             self.notify("Install pyperclip", severity="warning")

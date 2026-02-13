@@ -67,6 +67,7 @@ class NoonScraper:
                             "[noon] Request error on attempt %d: %s",
                             attempt + 1,
                             e,
+                            exc_info=True,
                         )
                         time.sleep(
                             self.settings.REQUEST_DELAY * (attempt + 1)
@@ -119,5 +120,5 @@ class NoonScraper:
 
             return products
         except Exception as e:
-            self.logger.error("[noon] Search failed: %s", e)
+            self.logger.error("[noon] Search failed: %s", e, exc_info=True)
             return []

@@ -1,0 +1,39 @@
+{
+  "hits": [
+    {
+      "sku": "N12345678",
+      "name": "Apple iPhone 15 Pro Max 256GB Natural Titanium",
+      "sale_price": 4999.0,
+      "price": 5499.0,
+      "rating": 4.7,
+      "image_url": "https://f.nooncdn.com/p/v1234/iphone15.jpg"
+    },
+    {
+      "sku": "N87654321",
+      "name": "Samsung Galaxy S24 Ultra 512GB Titanium Black",
+      "sale_price": 4299.0,
+      "price": 4799.0,
+      "rating": 4.5,
+      "image_url": "https://f.nooncdn.com/p/v1234/galaxy_s24.jpg"
+    },
+    {
+      "sku": "N11223344",
+      "name_en": "Google Pixel 8 Pro 128GB Obsidian",
+      "sale_price": null,
+      "price": 2699.0,
+      "rating": 4.3,
+      "image_url": "https://f.nooncdn.com/p/v1234/pixel8.jpg"
+    },
+    {
+      "sku": "",
+      "title": "OnePlus 12 16GB RAM 512GB Silky Black",
+      "sale_price": 3199.0,
+      "price": 3499.0,
+      "rating": null,
+      "image_url": ""
+    }
+  ],
+  "nbPages": 1,
+  "page": 1,
+  "nbHits": 4
+}

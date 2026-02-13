@@ -61,6 +61,7 @@ class BaseScraper(ABC):
                     self.source_name,
                     attempt + 1,
                     e,
+                    exc_info=True,
                 )
                 time.sleep(self.settings.REQUEST_DELAY * (attempt + 1))
 
@@ -81,6 +82,7 @@ class BaseScraper(ABC):
                 "[%s] cloudscraper fallback also failed: %s",
                 self.source_name,
                 e,
+                exc_info=True,
             )
 
         return None

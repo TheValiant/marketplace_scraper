@@ -16,7 +16,7 @@ class Settings:
     REQUEST_DELAY: float = 2.0          # Seconds between requests
     REQUEST_TIMEOUT: int = 15           # Seconds before a request times out
     MAX_RETRIES: int = 3                # Retry count on transient failures
-    MAX_PAGES: int = 3                  # Max pagination depth per source
+    MAX_PAGES: int = 10                 # Max pagination depth per source
 
     # --- Browser Impersonation ---
     IMPERSONATE_BROWSER: str = "chrome124"
@@ -28,6 +28,7 @@ class Settings:
     BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
     SELECTORS_PATH: Path = BASE_DIR / "src" / "config" / "selectors.json"
     RESULTS_DIR: Path = BASE_DIR / "results"
+    LOGS_DIR: Path = BASE_DIR / "logs"
 
     # --- Sources (registry for future extensibility) ---
     AVAILABLE_SOURCES: list[dict] = [

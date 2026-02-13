@@ -23,6 +23,11 @@ class AmazonScraper(BaseScraper):
             url = f"https://www.amazon.ae/s?k={query}"
 
             for page in range(1, self.settings.MAX_PAGES + 1):
+                self.logger.info(
+                    "[amazon] Fetching page %d (collected %d so far)",
+                    page,
+                    len(products),
+                )
                 soup = self._get_page(url)
                 if not soup:
                     break
@@ -71,5 +76,5 @@ class AmazonScraper(BaseScraper):
 
             return products
         except Exception as e:
-            self.logger.error("[amazon] Search failed: %s", e)
+            self.logger.error("[amazon] Search failed: %s", e, exc_info=True)
             return []
