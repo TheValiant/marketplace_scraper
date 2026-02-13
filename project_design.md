@@ -247,11 +247,15 @@ class Product:
 # src/scrapers/base_scraper.py
 
 import json
+import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from curl_cffi import requests as curl_requests
+
+import cloudscraper
 from bs4 import BeautifulSoup
+from curl_cffi import requests as curl_requests
+
 from src.config.settings import Settings
 
 class BaseScraper(ABC):
@@ -259,6 +263,7 @@ class BaseScraper(ABC):
 
     def __init__(self, source_name: str):
         self.source_name = source_name
+        self.logger = logging.getLogger(f"ecom_search.{source_name}")
         self.settings = Settings()
         self.selectors = self._load_selectors()
         self.session = curl_requests.Session(
@@ -272,13 +277,14 @@ class BaseScraper(ABC):
         return all_selectors.get(self.source_name, {})
 
     def _get_page(self, url: str) -> BeautifulSoup | None:
-        """Fetch a page and return parsed soup, respecting rate limits."""
+        """Fetch a page with curl_cffi, falling back to cloudscraper on failure."""
         headers = {
             **self.settings.DEFAULT_HEADERS,
             "Referer": self._get_homepage(),
         }
         time.sleep(self.settings.REQUEST_DELAY)
 
+        # Primary: curl_cffi (browser-impersonating TLS)
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.get(
@@ -286,8 +292,25 @@ class BaseScraper(ABC):
                 )
                 if resp.status_code == 200:
                     return BeautifulSoup(resp.text, "lxml")
-            except Exception:
+                self.logger.warning(
+                    "[%s] HTTP %d on attempt %d", self.source_name, resp.status_code, attempt + 1
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "[%s] curl_cffi error on attempt %d: %s", self.source_name, attempt + 1, e
+                )
                 time.sleep(self.settings.REQUEST_DELAY * (attempt + 1))
+
+        # Fallback: cloudscraper (JS challenge solver)
+        self.logger.info("[%s] curl_cffi exhausted, falling back to cloudscraper", self.source_name)
+        try:
+            scraper = cloudscraper.create_scraper()
+            resp = scraper.get(url, headers=headers, timeout=self.settings.REQUEST_TIMEOUT)
+            if resp.status_code == 200:
+                return BeautifulSoup(resp.text, "lxml")
+        except Exception as e:
+            self.logger.error("[%s] cloudscraper fallback also failed: %s", self.source_name, e)
+
         return None
 
     @staticmethod
@@ -361,6 +384,7 @@ class NoonScraper(BaseScraper):
 
             return products
         except Exception as e:
+            self.logger.error("[noon] Search failed: %s", e)
             return []
 ```
 
@@ -416,6 +440,7 @@ class AmazonScraper(BaseScraper):
 
             return products
         except Exception as e:
+            self.logger.error("[amazon] Search failed: %s", e)
             return []
 ```
 
@@ -680,8 +705,17 @@ class FileManager:
 | **Headers** | `Accept-Language`, `Referer` (site homepage) sent on every request |
 | **Rate Limiting** | `Settings.REQUEST_DELAY` (2s default) enforced between every request |
 | **Retry Backoff** | Exponential: `delay * (attempt + 1)` on failure |
-| **Fallback** | `cloudscraper` can be swapped in if `curl_cffi` gets detected |
+| **Fallback** | `cloudscraper` auto-triggers in `_get_page()` after `MAX_RETRIES` curl_cffi failures |
 | **Selector Separation** | Selectors in JSON, not code — fast recovery when site layouts change |
+
+### Fallback Mechanism
+
+The `BaseScraper._get_page()` method implements a **two-tier fetching strategy**:
+
+1. **Primary** — `curl_cffi` with `MAX_RETRIES` attempts and exponential backoff.
+2. **Fallback** — If all `curl_cffi` attempts fail (blocked, timeout, network error), a single `cloudscraper` request is attempted as a last resort.
+
+This ensures that even when a marketplace starts fingerprinting `curl_cffi`'s TLS signature, the scraper degrades gracefully to `cloudscraper`'s JS challenge solver rather than returning zero results.
 
 ---
 
@@ -690,7 +724,7 @@ class FileManager:
 ### Principles
 
 - **Never hit live URLs** in automated tests to avoid IP bans.
-- **Mock `curl_requests.get`** to return saved HTML fixtures.
+- **Mock `curl_requests.Session`** to return saved HTML fixtures.
 - **Validate** against `selectors.json` keys (`product_card`, `title`, `price`, etc.).
 
 ### Example Test Structure
@@ -790,13 +824,15 @@ class TestNoonScraper(unittest.TestCase):
 ```python
 # src/ui/app.py
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, Input, Button, DataTable, Static, Checkbox
-from textual.binding import Binding
-from rich.text import Text
 import asyncio
 import webbrowser
+
+from rich.text import Text
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Container, Horizontal, Vertical
+from textual.widgets import Header, Footer, Input, Button, DataTable, Static, Checkbox
+
 from src.scrapers.noon_scraper import NoonScraper
 from src.scrapers.amazon_scraper import AmazonScraper
 from src.storage.file_manager import FileManager
