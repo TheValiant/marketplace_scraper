@@ -1,0 +1,20 @@
+{
+    "noon": {
+        "product_card": "div[data-qa='product-block']",
+        "title": "span[data-qa='product-name']",
+        "price": "strong[data-qa='product-price']",
+        "currency": "span.currency",
+        "rating": "div[data-qa='product-rating']",
+        "url": "a[data-qa='product-link']",
+        "next_page": "a[rel='next']"
+    },
+    "amazon": {
+        "product_card": "div[data-component-type='s-search-result']",
+        "title": "h2 a span",
+        "price": "span.a-price > span.a-offscreen",
+        "currency": "",
+        "rating": "span.a-icon-alt",
+        "url": "h2 a.a-link-normal",
+        "next_page": "a.s-pagination-next"
+    }
+}

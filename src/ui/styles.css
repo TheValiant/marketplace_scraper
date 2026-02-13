@@ -1,0 +1,56 @@
+/* src/ui/styles.css */
+
+/* --- Title Banner --- */
+#title {
+    text-align: center;
+    background: $primary;
+    color: $text;
+    padding: 1;
+    text-style: bold;
+}
+
+/* --- Search Bar --- */
+#search_bar {
+    height: 3;
+    padding: 1 1 0 1;
+    background: $surface;
+}
+
+#search_input {
+    width: 4fr;
+}
+
+#search_btn {
+    width: 1fr;
+    min-width: 10;
+}
+
+/* --- Source Selection Checkboxes --- */
+#source_toggles {
+    height: 3;
+    padding: 0 1 1 1;
+    background: $surface;
+    align: center middle;
+}
+
+Checkbox {
+    padding: 0 2;
+}
+
+/* --- Status Bar --- */
+#status {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text;
+}
+
+/* --- Results Table --- */
+#results_table {
+    height: 1fr;
+    border: solid $primary;
+}
+
+DataTable > .datatable--cursor {
+    background: $secondary 30%;
+}
