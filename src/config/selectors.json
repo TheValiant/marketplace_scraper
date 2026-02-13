@@ -10,11 +10,11 @@
     },
     "amazon": {
         "product_card": "div[data-component-type='s-search-result']",
-        "title": "h2 a span",
-        "price": "span.a-price > span.a-offscreen",
+        "title": "h2 span",
+        "price": "span.a-price span.a-offscreen",
         "currency": "",
         "rating": "span.a-icon-alt",
-        "url": "h2 a.a-link-normal",
+        "url": "a.a-link-normal.s-line-clamp-4",
         "next_page": "a.s-pagination-next"
     }
 }
