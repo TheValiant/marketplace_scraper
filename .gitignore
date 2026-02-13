@@ -2,21 +2,48 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
 
 # Virtual environment
 .venv/
 venv/
+env/
+ENV/
 
 # Environment variables
 .env
+.env.*
 
 # Logs (per-run, timestamped)
 logs/
 
-# IDE
+# Scraped results (auto-generated, potentially large)
+results/
+
+# IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# pytest / testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
+# Misc
+*.log
+.antigravity/

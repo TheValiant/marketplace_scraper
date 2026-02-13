@@ -144,9 +144,33 @@ class EcomSearchApp(App):
         if not self.products:
             self.query_one("#status").update("❌ No products found")
         else:
+            # Auto-save results to disk
+            self._auto_save_results()
             self.query_one("#status").update(
-                f"✅ Found {len(self.products)} products"
+                f"✅ Found {len(self.products)} products (saved)"
             )
+
+    def _auto_save_results(self) -> None:
+        """Automatically save search results after every successful search."""
+        try:
+            # Save combined results
+            path = self.file_manager.save_results(
+                self.current_query, self.products, "combined"
+            )
+            logger.info("Auto-saved combined results to %s", path)
+
+            # Save per-source results
+            sources = {p.source for p in self.products}
+            for source in sources:
+                source_products = [
+                    p for p in self.products if p.source == source
+                ]
+                self.file_manager.save_results(
+                    self.current_query, source_products, source
+                )
+        except Exception as e:
+            logger.error("Auto-save failed: %s", e, exc_info=True)
+            self.notify(f"Auto-save failed: {e}", severity="error")
 
     def populate_table(self) -> None:
         """Fill the DataTable with current product results."""
