@@ -42,4 +42,19 @@ class Settings:
             "label": "Amazon",
             "scraper": "src.scrapers.amazon_scraper.AmazonScraper",
         },
+        {
+            "id": "binsina",
+            "label": "BinSina",
+            "scraper": "src.scrapers.binsina_scraper.BinSinaScraper",
+        },
+        {
+            "id": "life_pharmacy",
+            "label": "Life Pharmacy",
+            "scraper": "src.scrapers.life_pharmacy_scraper.LifePharmacyScraper",
+        },
+        {
+            "id": "aster",
+            "label": "Aster",
+            "scraper": "src.scrapers.aster_scraper.AsterScraper",
+        },
     ]

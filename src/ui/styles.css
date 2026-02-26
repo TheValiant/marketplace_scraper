@@ -27,7 +27,7 @@
 
 /* --- Source Selection Checkboxes --- */
 #source_toggles {
-    height: 3;
+    height: auto;
     padding: 0 1 1 1;
     background: $surface;
     align: center middle;

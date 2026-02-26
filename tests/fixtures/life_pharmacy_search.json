@@ -1,0 +1,55 @@
+{
+  "success": true,
+  "data": {
+    "products": [
+      {
+        "title": "Panadol Extra Optizorb 500mg/65mg 24 Tablets",
+        "slug": "panadol-extra-optizorb-24-tablets",
+        "sale": {
+          "offer_price": 17.50,
+          "regular_price": 20.00,
+          "currency": "AED"
+        },
+        "rating": "4.5",
+        "images": {
+          "featured_image": "https://lifeadmin-app.s3.me-south-1.amazonaws.com/panadol_extra.jpg"
+        },
+        "inventory": {
+          "sku": "LP-10001"
+        }
+      },
+      {
+        "title": "Panadol Advance 500mg 48 Tablets",
+        "slug": "panadol-advance-500mg-48-tablets",
+        "sale": {
+          "offer_price": 21.00,
+          "regular_price": 25.00,
+          "currency": "AED"
+        },
+        "rating": "4.8",
+        "images": {
+          "featured_image": "https://lifeadmin-app.s3.me-south-1.amazonaws.com/panadol_advance.jpg"
+        },
+        "inventory": {
+          "sku": "LP-10002"
+        }
+      },
+      {
+        "title": "Panadol Cold & Flu All-in-One 24 Tablets",
+        "slug": "panadol-cold-flu-all-in-one-24-tablets",
+        "sale": {
+          "offer_price": 0,
+          "regular_price": 19.00,
+          "currency": "AED"
+        },
+        "rating": "",
+        "images": {
+          "featured_image": ""
+        },
+        "inventory": {
+          "sku": "LP-10003"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,60 @@
+{
+  "hits": [
+    {
+      "name": "Panadol Extra Optizorb 500mg/65mg Tablets 24s",
+      "url": "/en/panadol-extra-optizorb-tablets-24s.html",
+      "image_url": "https://binsina.ae/media/catalog/product/p/a/panadol_extra.jpg",
+      "rating_summary": 85,
+      "price": {
+        "AED": {
+          "default": 18.90,
+          "default_formated": "AED 18.90"
+        }
+      },
+      "objectID": "12345"
+    },
+    {
+      "name": "Panadol Advance 500mg Tablets 48s",
+      "url": "/en/panadol-advance-500mg-48s.html",
+      "image_url": "https://binsina.ae/media/catalog/product/p/a/panadol_advance.jpg",
+      "rating_summary": 92,
+      "price": {
+        "AED": {
+          "default": 22.50,
+          "default_formated": "AED 22.50"
+        }
+      },
+      "objectID": "12346"
+    },
+    {
+      "name": "Panadol Cold & Flu Day Tablets 24s",
+      "url": "/en/panadol-cold-flu-day-24s.html",
+      "image_url": "https://binsina.ae/media/catalog/product/p/a/panadol_cold.jpg",
+      "rating_summary": 0,
+      "price": {
+        "AED": {
+          "default": 15.75,
+          "default_formated": "AED 15.75"
+        }
+      },
+      "objectID": "12347"
+    },
+    {
+      "name": "Panadol Night Tablets 20s",
+      "url": "",
+      "image_url": "",
+      "rating_summary": null,
+      "price": {
+        "AED": {
+          "default": 12.00,
+          "default_formated": "AED 12.00"
+        }
+      },
+      "objectID": "12348"
+    }
+  ],
+  "nbHits": 4,
+  "page": 0,
+  "nbPages": 1,
+  "hitsPerPage": 40
+}

@@ -3,6 +3,7 @@
 """Terminal UI for the ecom_search price comparison engine."""
 
 import asyncio
+import importlib
 import logging
 import webbrowser
 
@@ -20,11 +21,17 @@ from textual.widgets import (
     Static,
 )
 
-from src.scrapers.amazon_scraper import AmazonScraper
-from src.scrapers.noon_scraper import NoonScraper
+from src.config.settings import Settings
 from src.storage.file_manager import FileManager
 
 logger = logging.getLogger("ecom_search.ui")
+
+
+def _load_scraper_class(dotted_path: str):
+    """Dynamically import a scraper class from its dotted module path."""
+    module_path, class_name = dotted_path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)
 
 
 class EcomSearchApp(App):
@@ -45,12 +52,25 @@ class EcomSearchApp(App):
         self.products: list = []
         self.current_query: str = ""
         self.file_manager = FileManager()
+        self.settings = Settings()
 
     def compose(self) -> ComposeResult:
         """Build the widget tree for the TUI."""
+        source_checkboxes = [
+            Checkbox(
+                src["label"], value=True, id=f"check_{src['id']}"
+            )
+            for src in self.settings.AVAILABLE_SOURCES
+        ]
+        source_names = ", ".join(
+            s["label"] for s in self.settings.AVAILABLE_SOURCES
+        )
+
         yield Header()
         yield Container(
-            Static("🛒 E-commerce Search (Noon & Amazon)", id="title"),
+            Static(
+                f"🛒 E-commerce Search ({source_names})", id="title"
+            ),
 
             # Search Bar
             Horizontal(
@@ -62,11 +82,7 @@ class EcomSearchApp(App):
             ),
 
             # Source Selection Checkboxes
-            Horizontal(
-                Checkbox("Noon", value=True, id="check_noon"),
-                Checkbox("Amazon", value=True, id="check_amazon"),
-                id="source_toggles",
-            ),
+            Horizontal(*source_checkboxes, id="source_toggles"),
 
             Static("Ready", id="status"),
             DataTable(
@@ -99,11 +115,14 @@ class EcomSearchApp(App):
             self.notify("Please enter a search term", severity="warning")
             return
 
-        # --- Check Source Selection ---
-        use_noon = self.query_one("#check_noon").value
-        use_amazon = self.query_one("#check_amazon").value
+        # --- Collect selected sources from the registry ---
+        selected_sources = []
+        for src in self.settings.AVAILABLE_SOURCES:
+            checkbox_id = f"#check_{src['id']}"
+            if self.query_one(checkbox_id).value:
+                selected_sources.append(src)
 
-        if not use_noon and not use_amazon:
+        if not selected_sources:
             self.notify("Select at least one source!", severity="error")
             return
 
@@ -112,17 +131,15 @@ class EcomSearchApp(App):
         self.query_one("#results_table").clear()
         self.query_one("#status").update(f"🔍 Searching '{query}'...")
 
-        # Build task list from checked sources only
-        tasks = []
-
-        async def run_scraper(scraper_cls):
+        # Build task list from checked sources dynamically
+        async def run_scraper(scraper_path: str):
             """Run a blocking scraper in a thread to keep UI responsive."""
+            scraper_cls = _load_scraper_class(scraper_path)
             return await asyncio.to_thread(scraper_cls().search, query)
 
-        if use_noon:
-            tasks.append(run_scraper(NoonScraper))
-        if use_amazon:
-            tasks.append(run_scraper(AmazonScraper))
+        tasks = [
+            run_scraper(src["scraper"]) for src in selected_sources
+        ]
 
         # Execute selected tasks concurrently
         results = await asyncio.gather(*tasks, return_exceptions=True)
