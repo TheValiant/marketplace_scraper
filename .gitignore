@@ -44,6 +44,12 @@ build/
 *.egg-info/
 *.egg
 
+# Mypy
+.mypy_cache/
+
+# Copilot memories (session-scoped, not for VCS)
+memories/session/
+
 # Misc
 *.log
 .antigravity/
