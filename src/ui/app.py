@@ -15,6 +15,7 @@ from textual.containers import Container, Horizontal
 from textual.widgets import (
     Button,
     Checkbox,
+    Collapsible,
     DataTable,
     Footer,
     Header,
@@ -60,15 +61,26 @@ class EcomSearchApp(App[object]):
 
     def compose(self) -> ComposeResult:
         """Build the widget tree for the TUI."""
+        sources = self.settings.AVAILABLE_SOURCES
         source_checkboxes = [
             Checkbox(
                 src["label"], value=True, id=f"check_{src['id']}"
             )
-            for src in self.settings.AVAILABLE_SOURCES
+            for src in sources
         ]
         source_names = ", ".join(
-            s["label"] for s in self.settings.AVAILABLE_SOURCES
+            s["label"] for s in sources
         )
+
+        # Arrange checkboxes in rows of 3
+        row_size = 3
+        checkbox_rows: list[Horizontal] = [
+            Horizontal(
+                *source_checkboxes[i:i + row_size],
+                classes="checkbox-row",
+            )
+            for i in range(0, len(source_checkboxes), row_size)
+        ]
 
         yield Header()
         yield Container(
@@ -85,8 +97,13 @@ class EcomSearchApp(App[object]):
                 id="search_bar",
             ),
 
-            # Source Selection Checkboxes
-            Horizontal(*source_checkboxes, id="source_toggles"),
+            # Source Selection Checkboxes (collapsible)
+            Collapsible(
+                *checkbox_rows,
+                title="Sources",
+                id="source_toggles",
+                collapsed=False,
+            ),
 
             Static("Ready", id="status"),
             cast(

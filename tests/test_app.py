@@ -6,7 +6,13 @@ import unittest
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
-from textual.widgets import Checkbox, DataTable, Input, Static
+from textual.widgets import (
+    Checkbox,
+    Collapsible,
+    DataTable,
+    Input,
+    Static,
+)
 
 from src.models.product import Product
 from src.ui.app import EcomSearchApp
@@ -24,7 +30,17 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
             app.query_one("#search_btn")
             app.query_one("#results_table", DataTable)
             app.query_one("#status", Static)
-            app.query_one("#source_toggles")
+            app.query_one("#source_toggles", Collapsible)
+            await pilot.pause()
+
+    async def test_source_toggles_is_collapsible(self) -> None:
+        """Verify source checkboxes are inside a Collapsible."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            collapsible = app.query_one(
+                "#source_toggles", Collapsible
+            )
+            self.assertFalse(collapsible.collapsed)
             await pilot.pause()
 
     async def test_all_source_checkboxes_present(self) -> None:

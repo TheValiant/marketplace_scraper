@@ -16,5 +16,14 @@
         "rating": "span.a-icon-alt",
         "url": "a.a-link-normal.s-line-clamp-4",
         "next_page": "a.s-pagination-next"
+    },
+    "iherb": {
+        "product_card": "div.product-cell-container",
+        "title": "div.product-title",
+        "price": "span.price",
+        "currency": "",
+        "rating": "a.rating-count",
+        "url": "a.absolute-link",
+        "next_page": "a.pagination-next"
     }
 }

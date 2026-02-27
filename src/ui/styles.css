@@ -25,12 +25,17 @@
     min-width: 10;
 }
 
-/* --- Source Selection Checkboxes --- */
+/* --- Source Selection Checkboxes (Collapsible) --- */
 #source_toggles {
     height: auto;
-    padding: 0 1 1 1;
     background: $surface;
+    padding-bottom: 0;
+}
+
+.checkbox-row {
+    height: auto;
     align: center middle;
+    padding: 0 1;
 }
 
 Checkbox {

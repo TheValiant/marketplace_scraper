@@ -69,4 +69,9 @@ class Settings:
             "label": "Aster",
             "scraper": "src.scrapers.aster_scraper.AsterScraper",
         },
+        {
+            "id": "iherb",
+            "label": "iHerb",
+            "scraper": "src.scrapers.iherb_scraper.IherbScraper",
+        },
     ]
