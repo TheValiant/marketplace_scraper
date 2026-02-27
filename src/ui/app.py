@@ -42,6 +42,7 @@ class EcomSearchApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("s", "save", "Save"),
+        Binding("e", "export", "Export CSV"),
         Binding("p", "sort_price", "Price Sort"),
         Binding("r", "sort_rating", "Rating Sort"),
         Binding("c", "copy_url", "Copy URL"),
@@ -241,6 +242,21 @@ class EcomSearchApp(App):
         except Exception as e:
             logger.error("Failed to save results", exc_info=True)
             self.notify(f"Save failed: {e}", severity="error")
+
+    def action_export(self) -> None:
+        """Export current results to a CSV file."""
+        if not self.products:
+            self.notify("No results to export", severity="warning")
+            return
+        try:
+            path = self.file_manager.export_csv(
+                self.current_query, self.products, "combined"
+            )
+            logger.info("Exported results to %s", path)
+            self.notify(f"Exported to {path}")
+        except Exception as e:
+            logger.error("Failed to export results", exc_info=True)
+            self.notify(f"Export failed: {e}", severity="error")
 
     def action_copy_url(self) -> None:
         """Copy the selected product's URL to the clipboard."""

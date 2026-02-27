@@ -2,6 +2,7 @@
 
 """Handles saving search results to disk."""
 
+import csv
 import json
 import logging
 from datetime import datetime
@@ -46,6 +47,37 @@ class FileManager:
 
         logger.info(
             "Saved %d products for query '%s' to %s",
+            len(products),
+            query,
+            filepath,
+        )
+        return filepath
+
+    def export_csv(
+        self, query: str, products: list[Product], source: str
+    ) -> Path:
+        """Export products to a human-readable CSV file sorted by price."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"export_{source}_{query.replace(' ', '_')}_{timestamp}.csv"
+        filepath = self.results_dir / filename
+
+        sorted_products = sorted(
+            products,
+            key=lambda p: p.price if p.price > 0 else float("inf"),
+        )
+
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(
+                ["Title", "Price", "Currency", "Rating", "Source", "URL"]
+            )
+            for p in sorted_products:
+                writer.writerow(
+                    [p.title, p.price, p.currency, p.rating, p.source, p.url]
+                )
+
+        logger.info(
+            "Exported %d products for query '%s' to %s",
             len(products),
             query,
             filepath,
