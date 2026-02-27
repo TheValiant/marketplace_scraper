@@ -7,35 +7,40 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
+from typing import Any
 
-import cloudscraper
+import cloudscraper  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
 
 from src.config.settings import Settings
+from src.models.product import Product
 
 
 class BaseScraper(ABC):
     """Abstract base class for all marketplace scrapers."""
 
-    def __init__(self, source_name: str):
+    def __init__(self, source_name: str) -> None:
         self.source_name = source_name
         self.logger = logging.getLogger(f"ecom_search.{source_name}")
         self.settings = Settings()
-        self.selectors = self._load_selectors()
+        self.selectors: dict[str, str] = self._load_selectors()
         self.session = curl_requests.Session(
             impersonate=self.settings.IMPERSONATE_BROWSER
         )
 
-    def _load_selectors(self) -> dict:
+    def _load_selectors(self) -> dict[str, str]:
         """Load CSS selectors for this source from selectors.json."""
         with open(self.settings.SELECTORS_PATH) as f:
-            all_selectors = json.load(f)
-        return all_selectors.get(self.source_name, {})
+            all_selectors: dict[str, Any] = json.load(f)
+        result: dict[str, str] = all_selectors.get(
+            self.source_name, {}
+        )
+        return result
 
     def _get_page(self, url: str) -> BeautifulSoup | None:
-        """Fetch a page with curl_cffi, falling back to cloudscraper on failure."""
-        headers = {
+        """Fetch a page, falling back to cloudscraper on failure."""
+        headers: dict[str, str] = {
             **self.settings.DEFAULT_HEADERS,
             "Referer": self._get_homepage(),
         }
@@ -45,7 +50,9 @@ class BaseScraper(ABC):
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.get(
-                    url, headers=headers, timeout=self.settings.REQUEST_TIMEOUT
+                    url,
+                    headers=headers,
+                    timeout=self.settings.REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 200:
                     return BeautifulSoup(resp.text, "lxml")
@@ -63,7 +70,9 @@ class BaseScraper(ABC):
                     e,
                     exc_info=True,
                 )
-                time.sleep(self.settings.REQUEST_DELAY * (attempt + 1))
+                time.sleep(
+                    self.settings.REQUEST_DELAY * (attempt + 1)
+                )
 
         # Fallback: cloudscraper (JS challenge solver)
         self.logger.info(
@@ -71,12 +80,17 @@ class BaseScraper(ABC):
             self.source_name,
         )
         try:
-            scraper = cloudscraper.create_scraper()
-            resp = scraper.get(
-                url, headers=headers, timeout=self.settings.REQUEST_TIMEOUT
+            _cs: Any = cloudscraper
+            scraper: Any = _cs.create_scraper()
+            fallback_resp: Any = scraper.get(
+                url,
+                headers=headers,
+                timeout=self.settings.REQUEST_TIMEOUT,
             )
-            if resp.status_code == 200:
-                return BeautifulSoup(resp.text, "lxml")
+            if fallback_resp.status_code == 200:
+                return BeautifulSoup(
+                    str(fallback_resp.text), "lxml"
+                )
         except Exception as e:
             self.logger.error(
                 "[%s] cloudscraper fallback also failed: %s",
@@ -88,11 +102,12 @@ class BaseScraper(ABC):
         return None
 
     @staticmethod
-    def extract_price(text: str) -> float:
+    def extract_price(text: str | None) -> float:
         """Extract a numeric price from a string like 'AED 1,299.00'."""
         if not text:
             return 0.0
-        numbers = re.findall(r"[\d,]+\.?\d*", text.replace(",", ""))
+        cleaned = text.replace(",", "")
+        numbers = re.findall(r"[\d,]+\.?\d*", cleaned)
         return float(numbers[0]) if numbers else 0.0
 
     @abstractmethod
@@ -101,6 +116,6 @@ class BaseScraper(ABC):
         ...
 
     @abstractmethod
-    def search(self, query: str) -> list:
+    def search(self, query: str) -> list[Product]:
         """Search for products and return a list of Product objects."""
         ...

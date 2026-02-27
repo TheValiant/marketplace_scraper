@@ -6,6 +6,7 @@ import asyncio
 import importlib
 import logging
 import webbrowser
+from typing import Any, cast
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -22,19 +23,21 @@ from textual.widgets import (
 )
 
 from src.config.settings import Settings
+from src.models.product import Product
 from src.storage.file_manager import FileManager
 
 logger = logging.getLogger("ecom_search.ui")
 
 
-def _load_scraper_class(dotted_path: str):
+def _load_scraper_class(dotted_path: str) -> type[Any]:
     """Dynamically import a scraper class from its dotted module path."""
     module_path, class_name = dotted_path.rsplit(".", 1)
     module = importlib.import_module(module_path)
-    return getattr(module, class_name)
+    cls: type[Any] = getattr(module, class_name)
+    return cls
 
 
-class EcomSearchApp(App):
+class EcomSearchApp(App[object]):
     """Terminal UI for the ecom_search price comparison engine."""
 
     CSS_PATH = "styles.css"
@@ -48,9 +51,9 @@ class EcomSearchApp(App):
         Binding("c", "copy_url", "Copy URL"),
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self.products: list = []
+        self.products: list[Product] = []
         self.current_query: str = ""
         self.file_manager = FileManager()
         self.settings = Settings()
@@ -86,8 +89,13 @@ class EcomSearchApp(App):
             Horizontal(*source_checkboxes, id="source_toggles"),
 
             Static("Ready", id="status"),
-            DataTable(
-                id="results_table", zebra_stripes=True, cursor_type="row"
+            cast(
+                DataTable[str | Text],
+                DataTable(
+                    id="results_table",
+                    zebra_stripes=True,
+                    cursor_type="row",
+                ),
             ),
             id="main_container",
         )
@@ -95,9 +103,11 @@ class EcomSearchApp(App):
 
     def on_mount(self) -> None:
         """Configure the results table columns on startup."""
-        self.query_one("#results_table").add_columns(
-            "Title", "Price", "Rating", "Source"
+        table = cast(
+            DataTable[str | Text],
+            self.query_one("#results_table", DataTable),
         )
+        table.add_columns("Title", "Price", "Rating", "Source")
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button click events."""
@@ -111,16 +121,22 @@ class EcomSearchApp(App):
 
     async def perform_search(self) -> None:
         """Execute a search against the selected sources."""
-        query = self.query_one("#search_input").value.strip()
+        search_input = self.query_one(
+            "#search_input", Input
+        )
+        query = search_input.value.strip()
         if not query:
-            self.notify("Please enter a search term", severity="warning")
+            self.notify(
+                "Please enter a search term", severity="warning"
+            )
             return
 
         # --- Collect selected sources from the registry ---
-        selected_sources = []
+        selected_sources: list[dict[str, str]] = []
         for src in self.settings.AVAILABLE_SOURCES:
             checkbox_id = f"#check_{src['id']}"
-            if self.query_one(checkbox_id).value:
+            checkbox = self.query_one(checkbox_id, Checkbox)
+            if checkbox.value:
                 selected_sources.append(src)
 
         if not selected_sources:
@@ -129,14 +145,24 @@ class EcomSearchApp(App):
 
         self.current_query = query
         self.products = []
-        self.query_one("#results_table").clear()
-        self.query_one("#status").update(f"🔍 Searching '{query}'...")
+        table = cast(
+            DataTable[str | Text],
+            self.query_one("#results_table", DataTable),
+        )
+        status = self.query_one("#status", Static)
+        table.clear()
+        status.update(f"🔍 Searching '{query}'...")
 
         # Build task list from checked sources dynamically
-        async def run_scraper(scraper_path: str):
-            """Run a blocking scraper in a thread to keep UI responsive."""
+        async def run_scraper(
+            scraper_path: str,
+        ) -> list[Product]:
+            """Run a blocking scraper in a thread."""
             scraper_cls = _load_scraper_class(scraper_path)
-            return await asyncio.to_thread(scraper_cls().search, query)
+            result: list[Product] = await asyncio.to_thread(
+                scraper_cls().search, query
+            )
+            return result
 
         tasks = [
             run_scraper(src["scraper"]) for src in selected_sources
@@ -160,11 +186,11 @@ class EcomSearchApp(App):
         self.populate_table()
 
         if not self.products:
-            self.query_one("#status").update("❌ No products found")
+            status.update("❌ No products found")
         else:
             # Auto-save results to disk
             self._auto_save_results()
-            self.query_one("#status").update(
+            status.update(
                 f"✅ Found {len(self.products)} products (saved)"
             )
 
@@ -192,7 +218,10 @@ class EcomSearchApp(App):
 
     def populate_table(self) -> None:
         """Fill the DataTable with current product results."""
-        table = self.query_one("#results_table")
+        table = cast(
+            DataTable[str | Text],
+            self.query_one("#results_table", DataTable),
+        )
         table.clear()
         if not self.products:
             return
@@ -211,10 +240,14 @@ class EcomSearchApp(App):
                 p.source.upper(),
             )
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+    def on_data_table_row_selected(
+        self, event: DataTable.RowSelected
+    ) -> None:
         """Open the selected product's URL in the default browser."""
         if 0 <= event.cursor_row < len(self.products):
-            webbrowser.open(self.products[event.cursor_row].url)
+            webbrowser.open(
+                self.products[event.cursor_row].url
+            )
 
     def action_sort_price(self) -> None:
         """Sort products by price, ascending."""
@@ -261,11 +294,20 @@ class EcomSearchApp(App):
     def action_copy_url(self) -> None:
         """Copy the selected product's URL to the clipboard."""
         try:
-            import pyperclip
+            import pyperclip  # type: ignore[import-untyped]
 
-            row = self.query_one("#results_table").cursor_row
+            table = cast(
+                DataTable[str | Text],
+                self.query_one("#results_table", DataTable),
+            )
+            row = table.cursor_row
             pyperclip.copy(self.products[row].url)
             self.notify("URL Copied")
         except Exception:
-            logger.error("Failed to copy URL to clipboard", exc_info=True)
-            self.notify("Install pyperclip", severity="warning")
+            logger.error(
+                "Failed to copy URL to clipboard",
+                exc_info=True,
+            )
+            self.notify(
+                "Install pyperclip", severity="warning"
+            )

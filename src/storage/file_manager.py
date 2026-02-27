@@ -17,7 +17,7 @@ logger = logging.getLogger("ecom_search.storage")
 class FileManager:
     """Handles saving search results to disk."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.results_dir: Path = Settings.RESULTS_DIR
         self.results_dir.mkdir(parents=True, exist_ok=True)
         logger.debug("FileManager initialised — results_dir=%s", self.results_dir)

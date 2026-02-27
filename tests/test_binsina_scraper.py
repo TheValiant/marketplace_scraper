@@ -5,6 +5,7 @@
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from src.scrapers.binsina_scraper import BinSinaScraper
@@ -23,6 +24,7 @@ class TestBinSinaScraper(unittest.TestCase):
         with open(fixture_path) as f:
             data = json.load(f)
         mock_resp.json.return_value = data
+        mock_resp.text = json.dumps(data)
         return mock_resp
 
     def _make_homepage_response(self) -> MagicMock:
@@ -128,10 +130,10 @@ class TestBinSinaScraper(unittest.TestCase):
 
         scraper = BinSinaScraper()
         scraper.session = mock_session
-        result = scraper._refresh_api_key()
+        result = scraper.refresh_api_key()
 
         self.assertTrue(result)
-        self.assertEqual(scraper._api_key, "test_algolia_api_key_abc123")
+        self.assertEqual(scraper.api_key, "test_algolia_api_key_abc123")
 
     @patch("src.scrapers.binsina_scraper.curl_requests.Session")
     def test_search_handles_empty_hits(
@@ -144,7 +146,9 @@ class TestBinSinaScraper(unittest.TestCase):
 
         empty_resp = MagicMock()
         empty_resp.status_code = 200
-        empty_resp.json.return_value = {"hits": [], "nbPages": 0}
+        empty_data: dict[str, Any] = {"hits": [], "nbPages": 0}
+        empty_resp.json.return_value = empty_data
+        empty_resp.text = json.dumps(empty_resp.json.return_value)
         mock_session.post.return_value = empty_resp
 
         scraper = BinSinaScraper()

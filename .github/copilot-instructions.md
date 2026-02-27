@@ -32,6 +32,11 @@
 - **Imports**: Group imports: Standard Library -> Third Party -> Local Application.
 - **Docstrings**: Include a brief docstring for every method explaining *what* it does, not *how*.
 
+# Post-Edit Verification
+- **Mandatory Linter Gate**: After **every** code edit, the agent **MUST** run `./pylance.sh` from the project root. This script runs Flake8 (style, max-complexity=10, 88-char lines) and Pyright in **strict** mode.
+- **Zero Tolerance**: All Flake8 and Pyright errors reported by `pylance.sh` must be resolved before the edit is considered complete. If the script fails, fix every flagged issue and re-run until the output shows `✓ All checks passed!`.
+- **No Bypass**: Never skip, silence, or weaken the checks (e.g., do not add `# type: ignore`, `# noqa`, or lower `typeCheckingMode`). If a check is wrong, fix the code — not the checker.
+
 # Testing & Verification
 - **Mocking**: When writing tests, mock `curl_requests.Session`. NEVER hit live Amazon/Noon URLs during automated tests to avoid IP bans.
 - **Dry Run**: Before analyzing large changes, run the code mentally against the `selectors.json` file to ensure key names match `product_card`, `title`, etc.

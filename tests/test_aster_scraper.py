@@ -5,6 +5,7 @@
 import json
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from src.scrapers.aster_scraper import AsterScraper
@@ -23,6 +24,7 @@ class TestAsterScraper(unittest.TestCase):
         with open(fixture_path) as f:
             data = json.load(f)
         mock_resp.json.return_value = data
+        mock_resp.text = json.dumps(data)
         return mock_resp
 
     @patch("src.scrapers.aster_scraper.curl_requests.Session")
@@ -137,11 +139,13 @@ class TestAsterScraper(unittest.TestCase):
         mock_session_cls.return_value = mock_session
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {
+        empty_data: dict[str, Any] = {
             "data": [],
             "totalPages": 0,
             "totalItems": 0,
         }
+        mock_resp.json.return_value = empty_data
+        mock_resp.text = json.dumps(mock_resp.json.return_value)
         mock_session.get.return_value = mock_resp
 
         scraper = AsterScraper()

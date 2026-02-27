@@ -4,6 +4,7 @@
 
 from pathlib import Path
 
+from curl_cffi.requests import BrowserTypeLiteral
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,8 +20,8 @@ class Settings:
     MAX_PAGES: int = 10                 # Max pagination depth per source
 
     # --- Browser Impersonation ---
-    IMPERSONATE_BROWSER: str = "chrome124"
-    DEFAULT_HEADERS: dict = {
+    IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome124"
+    DEFAULT_HEADERS: dict[str, str] = {
         "Accept-Language": "en-US,en;q=0.9",
     }
 
@@ -31,7 +32,7 @@ class Settings:
     LOGS_DIR: Path = BASE_DIR / "logs"
 
     # --- Sources (registry for future extensibility) ---
-    AVAILABLE_SOURCES: list[dict] = [
+    AVAILABLE_SOURCES: list[dict[str, str]] = [
         {
             "id": "noon",
             "label": "Noon",

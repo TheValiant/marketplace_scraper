@@ -1,11 +1,12 @@
 # src/scrapers/binsina_scraper.py
 
-"""Scraper for binsina.ae (UAE) using their Algolia-powered search API."""
+"""Scraper for binsina.ae (UAE) via their Algolia-powered search API."""
 
 import json
 import logging
 import re
 import time
+from typing import Any, cast
 
 from curl_cffi import requests as curl_requests
 
@@ -28,28 +29,30 @@ class BinSinaScraper:
     HOMEPAGE_URL = "https://binsina.ae/en/"
     BASE_PRODUCT_URL = "https://binsina.ae"
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = logging.getLogger("ecom_search.binsina")
         self.settings = Settings()
         self.session = curl_requests.Session(
             impersonate=self.settings.IMPERSONATE_BROWSER
         )
-        self._api_key: str = ""
+        self.api_key: str = ""
 
-    def _refresh_api_key(self) -> bool:
+    def refresh_api_key(self) -> bool:
         """Fetch a fresh Algolia API key from the BinSina homepage."""
         try:
+            headers: dict[str, str] = {
+                **self.settings.DEFAULT_HEADERS,
+                "Referer": "https://binsina.ae/",
+            }
             resp = self.session.get(
                 self.HOMEPAGE_URL,
-                headers={
-                    **self.settings.DEFAULT_HEADERS,
-                    "Referer": "https://binsina.ae/",
-                },
+                headers=headers,
                 timeout=self.settings.REQUEST_TIMEOUT,
             )
             if resp.status_code != 200:
                 self.logger.warning(
-                    "[binsina] Homepage returned HTTP %d", resp.status_code
+                    "[binsina] Homepage returned HTTP %d",
+                    resp.status_code,
                 )
                 return False
 
@@ -60,14 +63,16 @@ class BinSinaScraper:
             )
             if not match:
                 self.logger.error(
-                    "[binsina] Could not find algoliaConfig in homepage"
+                    "[binsina] Could not find algoliaConfig"
                 )
                 return False
 
-            config = json.loads(match.group(1))
-            self._api_key = config.get("apiKey", "")
-            if not self._api_key:
-                self.logger.error("[binsina] Empty API key in algoliaConfig")
+            config: dict[str, Any] = json.loads(match.group(1))
+            self.api_key = str(config.get("apiKey", ""))
+            if not self.api_key:
+                self.logger.error(
+                    "[binsina] Empty API key in algoliaConfig"
+                )
                 return False
 
             self.logger.info("[binsina] Refreshed Algolia API key")
@@ -80,109 +85,137 @@ class BinSinaScraper:
             )
             return False
 
+    def _fetch_page(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> curl_requests.Response | None:
+        """POST a single page request with retries."""
+        for attempt in range(self.settings.MAX_RETRIES):
+            try:
+                resp = self.session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.settings.REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    return resp
+                self.logger.warning(
+                    "[binsina] HTTP %d on attempt %d",
+                    resp.status_code,
+                    attempt + 1,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "[binsina] Request error attempt %d: %s",
+                    attempt + 1,
+                    exc,
+                    exc_info=True,
+                )
+                time.sleep(
+                    self.settings.REQUEST_DELAY * (attempt + 1)
+                )
+        return None
+
+    @staticmethod
+    def _parse_hit(hit: dict[str, Any]) -> Product:
+        """Parse a single Algolia hit into a Product."""
+        title = str(hit.get("name", "N/A"))
+        price = BinSinaScraper._extract_price(hit)
+        product_url = str(hit.get("url", ""))
+        if product_url and not product_url.startswith("http"):
+            product_url = (
+                BinSinaScraper.BASE_PRODUCT_URL + product_url
+            )
+        return Product(
+            title=title,
+            price=price,
+            currency="AED",
+            rating=str(hit.get("rating_summary", "")),
+            url=product_url,
+            source="binsina",
+            image_url=str(hit.get("image_url", "")),
+        )
+
     def search(self, query: str) -> list[Product]:
         """Search BinSina for products matching the query."""
         try:
-            if not self._api_key and not self._refresh_api_key():
+            if not self.api_key and not self.refresh_api_key():
                 self.logger.error("[binsina] No API key available")
                 return []
 
             products: list[Product] = []
             url = self.ALGOLIA_URL.format(
-                app_id=self.ALGOLIA_APP_ID, index=self.ALGOLIA_INDEX
+                app_id=self.ALGOLIA_APP_ID,
+                index=self.ALGOLIA_INDEX,
             )
-            headers = {
+            headers: dict[str, str] = {
                 "X-Algolia-Application-Id": self.ALGOLIA_APP_ID,
-                "X-Algolia-API-Key": self._api_key,
+                "X-Algolia-API-Key": self.api_key,
                 "Content-Type": "application/json",
                 "Referer": self.HOMEPAGE_URL,
             }
 
             for page in range(self.settings.MAX_PAGES):
                 time.sleep(self.settings.REQUEST_DELAY)
-                payload = {
+                payload: dict[str, Any] = {
                     "query": query,
                     "page": page,
                     "hitsPerPage": 40,
                 }
 
-                resp = None
-                for attempt in range(self.settings.MAX_RETRIES):
-                    try:
-                        resp = self.session.post(
-                            url,
-                            headers=headers,
-                            json=payload,
-                            timeout=self.settings.REQUEST_TIMEOUT,
-                        )
-                        if resp.status_code == 200:
-                            break
-                        self.logger.warning(
-                            "[binsina] HTTP %d on attempt %d",
-                            resp.status_code,
-                            attempt + 1,
-                        )
-                    except Exception as exc:
-                        self.logger.warning(
-                            "[binsina] Request error on attempt %d: %s",
-                            attempt + 1,
-                            exc,
-                            exc_info=True,
-                        )
-                        time.sleep(
-                            self.settings.REQUEST_DELAY * (attempt + 1)
-                        )
-
-                if not resp or resp.status_code != 200:
+                resp = self._fetch_page(url, headers, payload)
+                if not resp:
                     self.logger.warning(
-                        "[binsina] Failed to fetch page %d", page
+                        "[binsina] Failed page %d", page
                     )
                     break
 
-                data = resp.json()
-                hits = data.get("hits", [])
+                data: dict[str, Any] = json.loads(resp.text)
+                hits: list[dict[str, Any]] = data.get(
+                    "hits", []
+                )
                 if not hits:
                     break
 
                 for hit in hits:
-                    title = hit.get("name", "N/A")
-                    price = self._extract_price(hit)
-                    product_url = hit.get("url", "")
-                    if product_url and not product_url.startswith("http"):
-                        product_url = self.BASE_PRODUCT_URL + product_url
+                    products.append(self._parse_hit(hit))
 
-                    products.append(
-                        Product(
-                            title=title,
-                            price=price,
-                            currency="AED",
-                            rating=str(hit.get("rating_summary", "")),
-                            url=product_url,
-                            source="binsina",
-                            image_url=hit.get("image_url", ""),
-                        )
-                    )
-
-                total_pages = data.get("nbPages", 1)
+                total_pages: int = int(
+                    data.get("nbPages", 1)
+                )
                 if page + 1 >= total_pages:
                     break
 
             return products
         except Exception as exc:
             self.logger.error(
-                "[binsina] Search failed: %s", exc, exc_info=True
+                "[binsina] Search failed: %s",
+                exc,
+                exc_info=True,
             )
             return []
 
     @staticmethod
-    def _extract_price(hit: dict) -> float:
+    def _extract_price(hit: dict[str, Any]) -> float:
         """Extract the AED price from an Algolia hit."""
         try:
-            price_data = hit.get("price", {})
+            price_data: Any = hit.get("price", {})
             if isinstance(price_data, dict):
-                aed = price_data.get("AED", {})
+                price_map = cast(
+                    dict[str, Any], price_data
+                )
+                aed: Any = price_map.get("AED", {})
                 if isinstance(aed, dict):
-                    return float(aed.get("default", 0))
+                    aed_map = cast(
+                        dict[str, Any], aed
+                    )
+                    return float(
+                        aed_map.get("default", 0)
+                    )
+                return 0.0
             return float(price_data) if price_data else 0.0
         except (TypeError, ValueError):
             return 0.0
