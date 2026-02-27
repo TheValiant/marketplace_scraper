@@ -22,12 +22,19 @@ class BaseScraper(ABC):
 
     def __init__(self, source_name: str) -> None:
         self.source_name = source_name
-        self.logger = logging.getLogger(f"ecom_search.{source_name}")
+        self.logger = logging.getLogger(
+            f"ecom_search.{source_name}"
+        )
         self.settings = Settings()
         self.selectors: dict[str, str] = self._load_selectors()
         self.session = curl_requests.Session(
             impersonate=self.settings.IMPERSONATE_BROWSER
         )
+        self._current_delay: float = (
+            self.settings.REQUEST_DELAY
+        )
+        self._consecutive_failures: int = 0
+        self._circuit_open: bool = False
 
     def _load_selectors(self) -> dict[str, str]:
         """Load CSS selectors for this source from selectors.json."""
@@ -38,15 +45,71 @@ class BaseScraper(ABC):
         )
         return result
 
-    def _get_page(self, url: str) -> BeautifulSoup | None:
-        """Fetch a page, falling back to cloudscraper on failure."""
-        headers: dict[str, str] = {
-            **self.settings.DEFAULT_HEADERS,
-            "Referer": self._get_homepage(),
-        }
-        time.sleep(self.settings.REQUEST_DELAY)
+    def _wait(self) -> None:
+        """Sleep using the current (possibly escalated) delay."""
+        time.sleep(self._current_delay)
 
-        # Primary: curl_cffi (browser-impersonating TLS)
+    def _validate_response(
+        self, resp: curl_requests.Response,
+    ) -> bool:
+        """Check for CAPTCHA indicators in non-JSON responses."""
+        text = resp.text
+        if text.lstrip().startswith(("{", "[")):
+            return True
+        lower = text.lower()
+        for keyword in self.settings.CAPTCHA_KEYWORDS:
+            if keyword in lower:
+                self.logger.warning(
+                    "[%s] CAPTCHA keyword '%s' detected",
+                    self.source_name,
+                    keyword,
+                )
+                return False
+        return True
+
+    def _record_success(self) -> None:
+        """Reset failure counters after a successful fetch."""
+        self._consecutive_failures = 0
+        self._current_delay = self.settings.REQUEST_DELAY
+
+    def _record_failure(self) -> None:
+        """Track failure and open circuit breaker if needed."""
+        self._consecutive_failures += 1
+        threshold = (
+            self.settings.CIRCUIT_BREAKER_THRESHOLD
+        )
+        if self._consecutive_failures >= threshold:
+            self._circuit_open = True
+            self.logger.error(
+                "[%s] Circuit breaker opened after %d "
+                "consecutive failures",
+                self.source_name,
+                self._consecutive_failures,
+            )
+
+    def _escalate_delay(self) -> None:
+        """Double the current delay up to the configured max."""
+        max_delay = (
+            self.settings.REQUEST_DELAY
+            * self.settings.MAX_DELAY_MULTIPLIER
+        )
+        self._current_delay = min(
+            self._current_delay * 2, max_delay
+        )
+        self.logger.warning(
+            "[%s] Rate-limited, delay escalated to %.1fs",
+            self.source_name,
+            self._current_delay,
+        )
+
+    def _fetch_get(
+        self,
+        url: str,
+        headers: dict[str, str],
+    ) -> curl_requests.Response | None:
+        """GET with retries, adaptive delay, and circuit breaker."""
+        if self._circuit_open:
+            return None
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.get(
@@ -55,24 +118,96 @@ class BaseScraper(ABC):
                     timeout=self.settings.REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 200:
-                    return BeautifulSoup(resp.text, "lxml")
+                    if not self._validate_response(resp):
+                        self._escalate_delay()
+                        time.sleep(self._current_delay)
+                        continue
+                    self._record_success()
+                    return resp
                 self.logger.warning(
                     "[%s] HTTP %d on attempt %d",
                     self.source_name,
                     resp.status_code,
                     attempt + 1,
                 )
-            except Exception as e:
+                if resp.status_code in (429, 403):
+                    self._escalate_delay()
+                    time.sleep(self._current_delay)
+            except Exception as exc:
                 self.logger.warning(
-                    "[%s] curl_cffi error on attempt %d: %s",
+                    "[%s] Request error on attempt %d: %s",
                     self.source_name,
                     attempt + 1,
-                    e,
+                    exc,
                     exc_info=True,
                 )
                 time.sleep(
-                    self.settings.REQUEST_DELAY * (attempt + 1)
+                    self._current_delay * (attempt + 1)
                 )
+        self._record_failure()
+        return None
+
+    def _fetch_post(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> curl_requests.Response | None:
+        """POST with retries, adaptive delay, and circuit breaker."""
+        if self._circuit_open:
+            return None
+        for attempt in range(self.settings.MAX_RETRIES):
+            try:
+                resp = self.session.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self.settings.REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    if not self._validate_response(resp):
+                        self._escalate_delay()
+                        time.sleep(self._current_delay)
+                        continue
+                    self._record_success()
+                    return resp
+                self.logger.warning(
+                    "[%s] HTTP %d on attempt %d",
+                    self.source_name,
+                    resp.status_code,
+                    attempt + 1,
+                )
+                if resp.status_code in (429, 403):
+                    self._escalate_delay()
+                    time.sleep(self._current_delay)
+            except Exception as exc:
+                self.logger.warning(
+                    "[%s] Request error on attempt %d: %s",
+                    self.source_name,
+                    attempt + 1,
+                    exc,
+                    exc_info=True,
+                )
+                time.sleep(
+                    self._current_delay * (attempt + 1)
+                )
+        self._record_failure()
+        return None
+
+    def _get_page(self, url: str) -> BeautifulSoup | None:
+        """Fetch a page, falling back to cloudscraper on failure."""
+        if self._circuit_open:
+            return None
+        headers: dict[str, str] = {
+            **self.settings.DEFAULT_HEADERS,
+            "Referer": self._get_homepage(),
+        }
+        self._wait()
+
+        # Primary: curl_cffi (browser-impersonating TLS)
+        resp = self._fetch_get(url, headers)
+        if resp:
+            return BeautifulSoup(resp.text, "lxml")
 
         # Fallback: cloudscraper (JS challenge solver)
         self.logger.info(

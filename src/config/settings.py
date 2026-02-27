@@ -19,6 +19,17 @@ class Settings:
     MAX_RETRIES: int = 3                # Retry count on transient failures
     MAX_PAGES: int = 10                 # Max pagination depth per source
 
+    # --- Resilience ---
+    CIRCUIT_BREAKER_THRESHOLD: int = 3  # Consecutive failures to trip
+    MAX_DELAY_MULTIPLIER: int = 8       # Cap for adaptive backoff
+    CAPTCHA_KEYWORDS: list[str] = [
+        "captcha",
+        "verify you are human",
+        "unusual traffic",
+        "automated requests",
+    ]
+    API_KEY_CACHE_TTL: float = 600.0    # BinSina key cache (secs)
+
     # --- Browser Impersonation ---
     IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome124"
     DEFAULT_HEADERS: dict[str, str] = {

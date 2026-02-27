@@ -3,17 +3,13 @@
 """Scraper for noon.com (UAE) using their internal search API."""
 
 import json
-import logging
-import time
 from typing import Any
 
-from curl_cffi import requests as curl_requests
-
-from src.config.settings import Settings
 from src.models.product import Product
+from src.scrapers.base_scraper import BaseScraper
 
 
-class NoonScraper:
+class NoonScraper(BaseScraper):
     """Scraper for noon.com (UAE) via internal JSON API.
 
     Noon is a Next.js SPA that returns 403 for HTML scraping.
@@ -26,43 +22,11 @@ class NoonScraper:
     )
 
     def __init__(self) -> None:
-        self.logger = logging.getLogger("ecom_search.noon")
-        self.settings = Settings()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
-        )
+        super().__init__("noon")
 
-    def _fetch_page(
-        self,
-        url: str,
-        headers: dict[str, str],
-    ) -> curl_requests.Response | None:
-        """Fetch a single page with retries."""
-        for attempt in range(self.settings.MAX_RETRIES):
-            try:
-                resp = self.session.get(
-                    url,
-                    headers=headers,
-                    timeout=self.settings.REQUEST_TIMEOUT,
-                )
-                if resp.status_code == 200:
-                    return resp
-                self.logger.warning(
-                    "[noon] HTTP %d on attempt %d",
-                    resp.status_code,
-                    attempt + 1,
-                )
-            except Exception as e:
-                self.logger.warning(
-                    "[noon] Request error on attempt %d: %s",
-                    attempt + 1,
-                    e,
-                    exc_info=True,
-                )
-                time.sleep(
-                    self.settings.REQUEST_DELAY * (attempt + 1)
-                )
-        return None
+    def _get_homepage(self) -> str:
+        """Return the Noon homepage URL."""
+        return "https://www.noon.com/uae-en/"
 
     @staticmethod
     def _parse_hit(hit: dict[str, Any]) -> Product:
@@ -107,12 +71,12 @@ class NoonScraper:
             }
 
             for page in range(1, self.settings.MAX_PAGES + 1):
-                time.sleep(self.settings.REQUEST_DELAY)
+                self._wait()
                 url = self.SEARCH_API.format(
                     query=query, page=page
                 )
 
-                resp = self._fetch_page(url, headers)
+                resp = self._fetch_get(url, headers)
                 if not resp:
                     self.logger.warning(
                         "[noon] Failed to fetch page %d", page

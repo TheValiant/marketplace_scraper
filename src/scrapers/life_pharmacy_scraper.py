@@ -3,18 +3,14 @@
 """Scraper for lifepharmacy.com (UAE) via their REST search API."""
 
 import json
-import logging
-import time
 import urllib.parse
 from typing import Any, cast
 
-from curl_cffi import requests as curl_requests
-
-from src.config.settings import Settings
 from src.models.product import Product
+from src.scrapers.base_scraper import BaseScraper
 
 
-class LifePharmacyScraper:
+class LifePharmacyScraper(BaseScraper):
     """Scraper for lifepharmacy.com via their public REST search API.
 
     Life Pharmacy is a Nuxt.js SPA with a backend API at
@@ -29,45 +25,11 @@ class LifePharmacyScraper:
     BASE_PRODUCT_URL = "https://www.lifepharmacy.com/product"
 
     def __init__(self) -> None:
-        self.logger = logging.getLogger(
-            "ecom_search.life_pharmacy"
-        )
-        self.settings = Settings()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
-        )
+        super().__init__("life_pharmacy")
 
-    def _fetch(
-        self,
-        url: str,
-        headers: dict[str, str],
-    ) -> curl_requests.Response | None:
-        """GET request with retries."""
-        for attempt in range(self.settings.MAX_RETRIES):
-            try:
-                resp = self.session.get(
-                    url,
-                    headers=headers,
-                    timeout=self.settings.REQUEST_TIMEOUT,
-                )
-                if resp.status_code == 200:
-                    return resp
-                self.logger.warning(
-                    "[life_pharmacy] HTTP %d on attempt %d",
-                    resp.status_code,
-                    attempt + 1,
-                )
-            except Exception as exc:
-                self.logger.warning(
-                    "[life_pharmacy] Request error attempt %d: %s",
-                    attempt + 1,
-                    exc,
-                    exc_info=True,
-                )
-                time.sleep(
-                    self.settings.REQUEST_DELAY * (attempt + 1)
-                )
-        return None
+    def _get_homepage(self) -> str:
+        """Return the Life Pharmacy homepage URL."""
+        return "https://www.lifepharmacy.com/"
 
     @staticmethod
     def _parse_item(item: dict[str, Any]) -> Product:
@@ -107,7 +69,7 @@ class LifePharmacyScraper:
                 "Referer": "https://www.lifepharmacy.com/",
             }
 
-            resp = self._fetch(url, headers)
+            resp = self._fetch_get(url, headers)
             if not resp:
                 self.logger.warning(
                     "[life_pharmacy] Failed to fetch results"

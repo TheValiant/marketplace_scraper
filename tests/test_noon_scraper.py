@@ -27,7 +27,7 @@ class TestNoonScraper(unittest.TestCase):
         mock_resp.text = json.dumps(data)
         return mock_resp
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_returns_products(self, mock_session_cls: MagicMock) -> None:
         """Verify that search() parses a fixture JSON into Product objects."""
         mock_session = MagicMock()
@@ -43,7 +43,7 @@ class TestNoonScraper(unittest.TestCase):
         self.assertEqual(len(products), 4)
         self.assertTrue(all(p.source == "noon" for p in products))
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_product_fields_parsed_correctly(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -68,7 +68,7 @@ class TestNoonScraper(unittest.TestCase):
         self.assertEqual(first.rating, "4.7")
         self.assertIn("N12345678", first.url)
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_fallback_name_fields(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -92,7 +92,7 @@ class TestNoonScraper(unittest.TestCase):
             products[3].title, "OnePlus 12 16GB RAM 512GB Silky Black"
         )
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_missing_sale_price_falls_back_to_price(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -110,7 +110,7 @@ class TestNoonScraper(unittest.TestCase):
         # Third product has null sale_price, should use price
         self.assertEqual(products[2].price, 2699.0)
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_empty_sku_generates_empty_url(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -128,7 +128,7 @@ class TestNoonScraper(unittest.TestCase):
         # Fourth product has empty sku
         self.assertEqual(products[3].url, "")
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_empty_hits(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -148,7 +148,7 @@ class TestNoonScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_http_error(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -165,7 +165,7 @@ class TestNoonScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.noon_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_network_exception(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -178,6 +178,86 @@ class TestNoonScraper(unittest.TestCase):
         scraper.session = mock_session
         products = scraper.search("iphone")
 
+        self.assertEqual(products, [])
+
+    # --- Retry behaviour tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_retry_then_succeed(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify search recovers after transient failures."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = self._make_mock_response("noon_search.json")
+        # Fail twice in _fetch_page, then succeed
+        mock_session.get.side_effect = [fail_resp, fail_resp, ok_resp]
+
+        scraper = NoonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        self.assertGreater(len(products), 0)
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_all_retries_exhausted(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify empty list when all retry attempts fail."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 500
+        mock_session.get.return_value = fail_resp
+
+        scraper = NoonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        self.assertEqual(products, [])
+
+    # --- Malformed data tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_invalid_json_response(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify graceful handling of non-JSON response body."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "not valid json"
+        mock_session.get.return_value = mock_resp
+
+        scraper = NoonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        self.assertEqual(products, [])
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_unexpected_json_structure(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify handling when JSON is valid but missing expected keys."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = json.dumps({"results": [], "total": 0})
+        mock_session.get.return_value = mock_resp
+
+        scraper = NoonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        # Missing "hits" key → empty list, no crash
         self.assertEqual(products, [])
 
 

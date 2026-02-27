@@ -3,18 +3,15 @@
 """Scraper for binsina.ae (UAE) via their Algolia-powered search API."""
 
 import json
-import logging
 import re
 import time
 from typing import Any, cast
 
-from curl_cffi import requests as curl_requests
-
-from src.config.settings import Settings
 from src.models.product import Product
+from src.scrapers.base_scraper import BaseScraper
 
 
-class BinSinaScraper:
+class BinSinaScraper(BaseScraper):
     """Scraper for binsina.ae via Algolia product search.
 
     BinSina uses Magento 2 with Algolia for search.  The API key is
@@ -30,12 +27,13 @@ class BinSinaScraper:
     BASE_PRODUCT_URL = "https://binsina.ae"
 
     def __init__(self) -> None:
-        self.logger = logging.getLogger("ecom_search.binsina")
-        self.settings = Settings()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
-        )
+        super().__init__("binsina")
         self.api_key: str = ""
+        self._api_key_expires_at: float = 0.0
+
+    def _get_homepage(self) -> str:
+        """Return the BinSina homepage URL."""
+        return self.HOMEPAGE_URL
 
     def refresh_api_key(self) -> bool:
         """Fetch a fresh Algolia API key from the BinSina homepage."""
@@ -76,6 +74,10 @@ class BinSinaScraper:
                 return False
 
             self.logger.info("[binsina] Refreshed Algolia API key")
+            self._api_key_expires_at = (
+                time.time()
+                + self.settings.API_KEY_CACHE_TTL
+            )
             return True
         except Exception as exc:
             self.logger.error(
@@ -84,40 +86,6 @@ class BinSinaScraper:
                 exc_info=True,
             )
             return False
-
-    def _fetch_page(
-        self,
-        url: str,
-        headers: dict[str, str],
-        payload: dict[str, Any],
-    ) -> curl_requests.Response | None:
-        """POST a single page request with retries."""
-        for attempt in range(self.settings.MAX_RETRIES):
-            try:
-                resp = self.session.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=self.settings.REQUEST_TIMEOUT,
-                )
-                if resp.status_code == 200:
-                    return resp
-                self.logger.warning(
-                    "[binsina] HTTP %d on attempt %d",
-                    resp.status_code,
-                    attempt + 1,
-                )
-            except Exception as exc:
-                self.logger.warning(
-                    "[binsina] Request error attempt %d: %s",
-                    attempt + 1,
-                    exc,
-                    exc_info=True,
-                )
-                time.sleep(
-                    self.settings.REQUEST_DELAY * (attempt + 1)
-                )
-        return None
 
     @staticmethod
     def _parse_hit(hit: dict[str, Any]) -> Product:
@@ -142,7 +110,12 @@ class BinSinaScraper:
     def search(self, query: str) -> list[Product]:
         """Search BinSina for products matching the query."""
         try:
-            if not self.api_key and not self.refresh_api_key():
+            is_expired = (
+                time.time() >= self._api_key_expires_at
+            )
+            if (not self.api_key or is_expired) and (
+                not self.refresh_api_key()
+            ):
                 self.logger.error("[binsina] No API key available")
                 return []
 
@@ -159,14 +132,14 @@ class BinSinaScraper:
             }
 
             for page in range(self.settings.MAX_PAGES):
-                time.sleep(self.settings.REQUEST_DELAY)
+                self._wait()
                 payload: dict[str, Any] = {
                     "query": query,
                     "page": page,
                     "hitsPerPage": 40,
                 }
 
-                resp = self._fetch_page(url, headers, payload)
+                resp = self._fetch_post(url, headers, payload)
                 if not resp:
                     self.logger.warning(
                         "[binsina] Failed page %d", page

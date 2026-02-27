@@ -210,6 +210,90 @@ class TestAmazonScraper(unittest.TestCase):
         self.assertEqual(scraper.extract_price(""), 0.0)
         self.assertEqual(scraper.extract_price(None), 0.0)
 
+    # --- Retry behaviour tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_search_retries_then_succeeds(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify search recovers after transient HTTP failures."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = "<html><body></body></html>"
+
+        # Fail twice, then succeed with empty page
+        mock_session.get.side_effect = [fail_resp, fail_resp, ok_resp]
+
+        scraper = AmazonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        self.assertEqual(products, [])
+        self.assertEqual(mock_session.get.call_count, 3)
+
+    # --- HTML edge-case tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_partial_card_missing_all_fields(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify product card with no title/price/rating/url is safe."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Card exists but every sub-element is missing
+        mock_resp.text = (
+            '<html><body>'
+            '<div data-component-type="s-search-result">'
+            '</div>'
+            '</body></html>'
+        )
+        mock_session.get.return_value = mock_resp
+
+        scraper = AmazonScraper()
+        scraper.session = mock_session
+        products = scraper.search("iphone")
+
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0].title, "N/A")
+        self.assertEqual(products[0].price, 0.0)
+        self.assertEqual(products[0].rating, "")
+        self.assertEqual(products[0].url, "")
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_partial_card_title_only(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify product card with only a title parses safely."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = (
+            '<html><body>'
+            '<div data-component-type="s-search-result">'
+            '  <h2><span>Only Title Here</span></h2>'
+            '</div>'
+            '</body></html>'
+        )
+        mock_session.get.return_value = mock_resp
+
+        scraper = AmazonScraper()
+        scraper.session = mock_session
+        products = scraper.search("test")
+
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0].title, "Only Title Here")
+        self.assertEqual(products[0].price, 0.0)
+        self.assertEqual(products[0].url, "")
+
 
 if __name__ == "__main__":
     unittest.main()

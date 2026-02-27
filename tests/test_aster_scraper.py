@@ -27,7 +27,7 @@ class TestAsterScraper(unittest.TestCase):
         mock_resp.text = json.dumps(data)
         return mock_resp
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_returns_products(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -45,7 +45,7 @@ class TestAsterScraper(unittest.TestCase):
         self.assertEqual(len(products), 3)
         self.assertTrue(all(p.source == "aster" for p in products))
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_product_fields_parsed_correctly(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -76,7 +76,7 @@ class TestAsterScraper(unittest.TestCase):
             )
         )
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_null_special_price_falls_back_to_price(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -94,7 +94,7 @@ class TestAsterScraper(unittest.TestCase):
         # Second product has special_price=null, should use price=18.0
         self.assertEqual(products[1].price, 18.0)
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_zero_special_price_falls_back_to_price(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -112,7 +112,7 @@ class TestAsterScraper(unittest.TestCase):
         # Third product has special_price=0, should use price=22.0
         self.assertEqual(products[2].price, 22.0)
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_empty_product_url_stays_empty(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -130,7 +130,7 @@ class TestAsterScraper(unittest.TestCase):
         # Third product has empty productUrl
         self.assertEqual(products[2].url, "")
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_empty_data(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -154,7 +154,7 @@ class TestAsterScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_http_error(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -171,7 +171,7 @@ class TestAsterScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.aster_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_network_exception(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -184,6 +184,85 @@ class TestAsterScraper(unittest.TestCase):
         scraper.session = mock_session
         products = scraper.search("panadol")
 
+        self.assertEqual(products, [])
+
+    # --- Retry behaviour tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_retry_then_succeed(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify search recovers after transient failures."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = self._make_mock_response("aster_search.json")
+        mock_session.get.side_effect = [fail_resp, fail_resp, ok_resp]
+
+        scraper = AsterScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertGreater(len(products), 0)
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_all_retries_exhausted(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify empty list when all retry attempts fail."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 500
+        mock_session.get.return_value = fail_resp
+
+        scraper = AsterScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertEqual(products, [])
+
+    # --- Malformed data tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_invalid_json_response(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify graceful handling of non-JSON response body."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "not valid json"
+        mock_session.get.return_value = mock_resp
+
+        scraper = AsterScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertEqual(products, [])
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_unexpected_json_structure(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify handling when JSON is valid but missing expected keys."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = json.dumps({"items": [], "count": 0})
+        mock_session.get.return_value = mock_resp
+
+        scraper = AsterScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        # Missing "data" key → empty list, no crash
         self.assertEqual(products, [])
 
 

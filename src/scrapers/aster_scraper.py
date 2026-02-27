@@ -2,19 +2,15 @@
 
 """Scraper for myaster.com (UAE) via Elasticsearch search API."""
 
-import logging
 import json
-import time
 import urllib.parse
 from typing import Any
 
-from curl_cffi import requests as curl_requests
-
-from src.config.settings import Settings
 from src.models.product import Product
+from src.scrapers.base_scraper import BaseScraper
 
 
-class AsterScraper:
+class AsterScraper(BaseScraper):
     """Scraper for myaster.com via their public search API.
 
     myAster is a Next.js app backed by an Elasticsearch search
@@ -30,43 +26,11 @@ class AsterScraper:
     BASE_URL = "https://www.myaster.com/en/online-pharmacy"
 
     def __init__(self) -> None:
-        self.logger = logging.getLogger("ecom_search.aster")
-        self.settings = Settings()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
-        )
+        super().__init__("aster")
 
-    def _fetch_page(
-        self,
-        url: str,
-        headers: dict[str, str],
-    ) -> curl_requests.Response | None:
-        """Fetch a single page with retries."""
-        for attempt in range(self.settings.MAX_RETRIES):
-            try:
-                resp = self.session.get(
-                    url,
-                    headers=headers,
-                    timeout=self.settings.REQUEST_TIMEOUT,
-                )
-                if resp.status_code == 200:
-                    return resp
-                self.logger.warning(
-                    "[aster] HTTP %d on attempt %d",
-                    resp.status_code,
-                    attempt + 1,
-                )
-            except Exception as exc:
-                self.logger.warning(
-                    "[aster] Request error on attempt %d: %s",
-                    attempt + 1,
-                    exc,
-                    exc_info=True,
-                )
-                time.sleep(
-                    self.settings.REQUEST_DELAY * (attempt + 1)
-                )
-        return None
+    def _get_homepage(self) -> str:
+        """Return the Aster homepage URL."""
+        return self.BASE_URL
 
     def _parse_item(self, item: dict[str, Any]) -> Product:
         """Parse a single API item into a Product."""
@@ -104,14 +68,14 @@ class AsterScraper:
             }
 
             for page in range(self.settings.MAX_PAGES):
-                time.sleep(self.settings.REQUEST_DELAY)
+                self._wait()
                 url = self.SEARCH_API.format(
                     query=encoded,
                     page_size=self.PAGE_SIZE,
                     page=page,
                 )
 
-                resp = self._fetch_page(url, headers)
+                resp = self._fetch_get(url, headers)
                 if not resp:
                     self.logger.warning(
                         "[aster] Failed page %d", page

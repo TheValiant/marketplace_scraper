@@ -36,7 +36,7 @@ class TestBinSinaScraper(unittest.TestCase):
             mock_resp.text = f.read()
         return mock_resp
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_returns_products(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -56,7 +56,7 @@ class TestBinSinaScraper(unittest.TestCase):
         self.assertEqual(len(products), 4)
         self.assertTrue(all(p.source == "binsina" for p in products))
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_product_fields_parsed_correctly(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -82,7 +82,7 @@ class TestBinSinaScraper(unittest.TestCase):
         self.assertIn("panadol-extra-optizorb", first.url)
         self.assertTrue(first.url.startswith("https://binsina.ae"))
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_empty_url_not_prefixed(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -101,7 +101,7 @@ class TestBinSinaScraper(unittest.TestCase):
         # Fourth product has empty url in fixture
         self.assertEqual(products[3].url, "")
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_null_rating_becomes_empty_string(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -119,7 +119,7 @@ class TestBinSinaScraper(unittest.TestCase):
 
         self.assertEqual(products[3].rating, "None")
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_api_key_extraction(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -135,7 +135,7 @@ class TestBinSinaScraper(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(scraper.api_key, "test_algolia_api_key_abc123")
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_empty_hits(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -157,7 +157,7 @@ class TestBinSinaScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_homepage_failure(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -175,7 +175,7 @@ class TestBinSinaScraper(unittest.TestCase):
 
         self.assertEqual(products, [])
 
-    @patch("src.scrapers.binsina_scraper.curl_requests.Session")
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
     def test_search_handles_network_exception(
         self, mock_session_cls: MagicMock
     ) -> None:
@@ -183,6 +183,152 @@ class TestBinSinaScraper(unittest.TestCase):
         mock_session = MagicMock()
         mock_session_cls.return_value = mock_session
         mock_session.get.side_effect = ConnectionError("Network unreachable")
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertEqual(products, [])
+
+    # --- API key edge-case tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_api_key_missing_from_homepage(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify graceful handling when algoliaConfig is absent."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = "<html><body>No algolia here</body></html>"
+        mock_session.get.return_value = resp
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        result = scraper.refresh_api_key()
+
+        self.assertFalse(result)
+        self.assertEqual(scraper.api_key, "")
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_api_key_empty_in_config(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify handling when algoliaConfig exists but apiKey is empty."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        html = (
+            '<html><script>'
+            'window.algoliaConfig = {"apiKey": "", "appId": "X"};'
+            '</script></html>'
+        )
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.text = html
+        mock_session.get.return_value = resp
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        result = scraper.refresh_api_key()
+
+        self.assertFalse(result)
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_api_key_homepage_network_failure(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify handling when homepage request raises exception."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.side_effect = ConnectionError("timeout")
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        result = scraper.refresh_api_key()
+
+        self.assertFalse(result)
+        self.assertEqual(scraper.api_key, "")
+
+    # --- Retry behaviour tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_retry_then_succeed(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify search recovers after transient POST failures."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._make_homepage_response()
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 503
+
+        ok_resp = self._make_algolia_response("binsina_algolia.json")
+        mock_session.post.side_effect = [fail_resp, fail_resp, ok_resp]
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertGreater(len(products), 0)
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_all_retries_exhausted(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify empty list when all POST retries fail."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._make_homepage_response()
+
+        fail_resp = MagicMock()
+        fail_resp.status_code = 500
+        mock_session.post.return_value = fail_resp
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertEqual(products, [])
+
+    # --- Malformed data tests ---
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_invalid_json_response(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify graceful handling of non-JSON response from Algolia."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._make_homepage_response()
+
+        bad_resp = MagicMock()
+        bad_resp.status_code = 200
+        bad_resp.text = "not valid json"
+        mock_session.post.return_value = bad_resp
+
+        scraper = BinSinaScraper()
+        scraper.session = mock_session
+        products = scraper.search("panadol")
+
+        self.assertEqual(products, [])
+
+    @patch("src.scrapers.base_scraper.curl_requests.Session")
+    def test_unexpected_json_structure(
+        self, mock_session_cls: MagicMock
+    ) -> None:
+        """Verify handling when JSON is valid but missing 'hits' key."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.return_value = self._make_homepage_response()
+
+        bad_resp = MagicMock()
+        bad_resp.status_code = 200
+        bad_resp.text = json.dumps({"results": [], "total": 0})
+        mock_session.post.return_value = bad_resp
 
         scraper = BinSinaScraper()
         scraper.session = mock_session
