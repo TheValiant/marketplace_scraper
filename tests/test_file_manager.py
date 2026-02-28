@@ -133,6 +133,44 @@ class TestFileManager(unittest.TestCase):
         self.assertIn("combined", path.name)
         self.assertTrue(path.name.endswith(".csv"))
 
+    # --- format_tsv tests ---
+
+    def test_format_tsv_header_and_rows(self) -> None:
+        """Verify TSV output contains a header and tab-separated rows."""
+        products = self._sample_products()
+        result = self.fm.format_tsv(products)
+        lines = result.split("\n")
+
+        self.assertEqual(len(lines), 3)  # header + 2 rows
+        self.assertEqual(
+            lines[0],
+            "Title\tPrice\tCurrency\tRating\tSource\tURL",
+        )
+        # Each data line has 6 tab-separated fields
+        for line in lines[1:]:
+            self.assertEqual(len(line.split("\t")), 6)
+
+    def test_format_tsv_sorted_by_price(self) -> None:
+        """Verify TSV rows are sorted by price ascending."""
+        products = self._sample_products()
+        result = self.fm.format_tsv(products)
+        lines = result.split("\n")
+
+        # First data row = cheapest (Product B, 50.0)
+        self.assertTrue(lines[1].startswith("Product B"))
+        self.assertTrue(lines[2].startswith("Product A"))
+
+    def test_format_tsv_empty_list(self) -> None:
+        """Verify TSV with no products returns header only."""
+        result = self.fm.format_tsv([])
+        lines = result.split("\n")
+
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(
+            lines[0],
+            "Title\tPrice\tCurrency\tRating\tSource\tURL",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -50,6 +50,7 @@ class EcomSearchApp(App[object]):
         Binding("p", "sort_price", "Price Sort"),
         Binding("r", "sort_rating", "Rating Sort"),
         Binding("c", "copy_url", "Copy URL"),
+        Binding("x", "export_clipboard", "Copy All"),
     ]
 
     def __init__(self) -> None:
@@ -323,6 +324,26 @@ class EcomSearchApp(App[object]):
         except Exception:
             logger.error(
                 "Failed to copy URL to clipboard",
+                exc_info=True,
+            )
+            self.notify(
+                "Install pyperclip", severity="warning"
+            )
+
+    def action_export_clipboard(self) -> None:
+        """Copy all results as tab-separated text to the clipboard."""
+        if not self.products:
+            self.notify("No results to copy", severity="warning")
+            return
+        try:
+            import pyperclip  # type: ignore[import-untyped]
+
+            tsv_text = self.file_manager.format_tsv(self.products)
+            pyperclip.copy(tsv_text)
+            self.notify(f"Copied {len(self.products)} products")
+        except Exception:
+            logger.error(
+                "Failed to copy results to clipboard",
                 exc_info=True,
             )
             self.notify(

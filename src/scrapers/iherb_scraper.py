@@ -1,11 +1,12 @@
 # src/scrapers/iherb_scraper.py
 
-"""Scraper for ae.iherb.com (UAE) via embedded Next.js JSON data."""
+"""Scraper for ae.iherb.com (UAE) via AJAX partial-HTML endpoint."""
 
-import json
+import time
 import urllib.parse
-from typing import Any, cast
+from typing import Any
 
+import cloudscraper  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup, Tag
 
 from src.models.product import Product
@@ -13,12 +14,16 @@ from src.scrapers.base_scraper import BaseScraper
 
 
 class IherbScraper(BaseScraper):
-    """Scraper for ae.iherb.com via embedded __NEXT_DATA__ JSON.
+    """Scraper for ae.iherb.com using the AJAX search endpoint.
 
-    iHerb is a Next.js React application protected by Cloudflare.
-    Product data is pre-loaded into a ``<script id="__NEXT_DATA__">``
-    tag.  When that tag is absent, CSS selectors from selectors.json
-    are used as a fallback.
+    iHerb returns a lightweight HTML fragment (no Cloudflare
+    challenge) when the ``X-Requested-With: XMLHttpRequest``
+    header is present.  Product data is extracted from
+    ``data-ga-*`` attributes on ``a.absolute-link`` elements
+    inside ``div.product-cell-container`` cards.
+
+    Falls back to cloudscraper full-page rendering if the
+    AJAX approach fails.
     """
 
     SEARCH_URL = (
@@ -28,100 +33,189 @@ class IherbScraper(BaseScraper):
 
     def __init__(self) -> None:
         super().__init__("iherb")
+        _cs: Any = cloudscraper
+        self._cs_scraper: Any = _cs.create_scraper()
 
     def _get_homepage(self) -> str:
         """Return the iHerb UAE homepage URL."""
         return "https://ae.iherb.com/"
 
     # ------------------------------------------------------------------
-    # Primary: extract from __NEXT_DATA__ JSON
+    # AJAX fetch (primary) — bypasses Cloudflare
+    # ------------------------------------------------------------------
+
+    def _ajax_headers(self) -> dict[str, str]:
+        """Build headers for the AJAX partial-HTML endpoint."""
+        return {
+            **self.settings.DEFAULT_HEADERS,
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": self._get_homepage(),
+        }
+
+    def _fetch_ajax(
+        self, url: str,
+    ) -> BeautifulSoup | None:
+        """Fetch a page via the AJAX endpoint using curl_cffi."""
+        if self._circuit_open:
+            return None
+        headers = self._ajax_headers()
+        resp = self._fetch_get(url, headers)
+        if resp is None:
+            return None
+        return BeautifulSoup(resp.text, "lxml")
+
+    # ------------------------------------------------------------------
+    # Cloudscraper fetch (fallback) — solves JS challenges
+    # ------------------------------------------------------------------
+
+    def _fetch_cloudscraper(
+        self, url: str,
+    ) -> BeautifulSoup | None:
+        """Fetch a full page via cloudscraper as fallback."""
+        headers: dict[str, str] = {
+            **self.settings.DEFAULT_HEADERS,
+            "Referer": self._get_homepage(),
+        }
+        for attempt in range(self.settings.MAX_RETRIES):
+            try:
+                resp: Any = self._cs_scraper.get(
+                    url,
+                    headers=headers,
+                    timeout=self.settings.REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 200:
+                    text: str = str(resp.text)
+                    lower = text.lower()
+                    if (
+                        "challenges.cloudflare.com" in lower
+                        or "just a moment" in lower
+                    ):
+                        self.logger.warning(
+                            "[iherb] Cloudflare challenge "
+                            "on cloudscraper attempt %d",
+                            attempt + 1,
+                        )
+                        self._escalate_delay()
+                        time.sleep(self._current_delay)
+                        continue
+                    return BeautifulSoup(text, "lxml")
+
+                self.logger.warning(
+                    "[iherb] cloudscraper HTTP %d "
+                    "on attempt %d",
+                    resp.status_code,
+                    attempt + 1,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "[iherb] cloudscraper error on "
+                    "attempt %d: %s",
+                    attempt + 1,
+                    exc,
+                )
+                time.sleep(
+                    self._current_delay * (attempt + 1)
+                )
+        return None
+
+    # ------------------------------------------------------------------
+    # Combined page fetch (AJAX then cloudscraper)
+    # ------------------------------------------------------------------
+
+    def _get_page(self, url: str) -> BeautifulSoup | None:
+        """Fetch page: AJAX first, cloudscraper fallback."""
+        if self._circuit_open:
+            return None
+        self._wait()
+
+        soup = self._fetch_ajax(url)
+        if soup is not None:
+            # AJAX succeeded — return even if no products
+            # (legitimate empty result for unknown queries)
+            return soup
+
+        self.logger.info(
+            "[iherb] AJAX fetch failed, "
+            "falling back to cloudscraper",
+        )
+        return self._fetch_cloudscraper(url)
+
+    # ------------------------------------------------------------------
+    # Product extraction from data-ga-* attributes (primary)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _find_products_in_json(
-        data: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        """Walk common Next.js paths to locate the product list."""
-        props: dict[str, Any] = data.get("props", {})
-        page_props: dict[str, Any] = props.get(
-            "pageProps", {}
-        )
+    def _parse_ga_card(card: Tag) -> Product | None:
+        """Extract product data from data-ga-* attributes."""
+        link = card.select_one("a.absolute-link")
+        if not link:
+            return None
 
-        # Try several known paths
-        for key in (
-            "products",
-            "searchData",
-            "results",
-            "catalogResults",
-        ):
-            candidate: Any = page_props.get(key)
-            if isinstance(candidate, list) and candidate:
-                typed_list = cast(
-                    list[dict[str, Any]], candidate
-                )
-                return typed_list
-            if isinstance(candidate, dict):
-                typed_dict = cast(
-                    dict[str, Any], candidate
-                )
-                inner: Any = typed_dict.get("products")
-                if isinstance(inner, list):
-                    return cast(
-                        list[dict[str, Any]], inner
-                    )
-
-        return []
-
-    @staticmethod
-    def _parse_json_product(
-        item: dict[str, Any],
-    ) -> Product:
-        """Parse a single product dict from the JSON payload."""
-        title = str(
-            item.get("title")
-            or item.get("name")
-            or item.get("productName", "N/A")
-        )
-        price = IherbScraper._extract_item_price(item)
-        product_url = str(item.get("url", "") or "")
-        if product_url and not product_url.startswith("http"):
-            product_url = (
-                IherbScraper.BASE_URL + product_url
+        title = str(link.get("title", "") or "")
+        if not title:
+            title_el = card.select_one("div.product-title")
+            title = (
+                title_el.get_text(strip=True)
+                if title_el
+                else "N/A"
             )
+
+        price_raw = str(
+            link.get("data-ga-discount-price", "0")
+        )
+        price = BaseScraper.extract_price(price_raw)
+
+        href = str(link.get("href", "") or "")
+        if href and not href.startswith("http"):
+            href = IherbScraper.BASE_URL + href
+
+        brand = str(
+            link.get("data-ga-brand-name", "") or ""
+        )
+        rating_el = card.select_one("a.rating-count")
+        rating_text = (
+            rating_el.get_text(strip=True)
+            if rating_el
+            else ""
+        )
+
+        img_el = card.select_one("img[itemprop='image']")
+        image_url = ""
+        if img_el:
+            image_url = str(img_el.get("src", "") or "")
+
+        full_title = (
+            f"{brand}, {title}" if brand and brand
+            not in title else title
+        )
+
         return Product(
-            title=title,
+            title=full_title,
             price=price,
             currency="AED",
-            rating=str(item.get("rating", "")),
-            url=product_url,
+            rating=rating_text,
+            url=href,
             source="iherb",
-            image_url=str(
-                item.get("imageUrl")
-                or item.get("image", "")
-            ),
+            image_url=image_url,
         )
 
-    @staticmethod
-    def _extract_item_price(
-        item: dict[str, Any],
-    ) -> float:
-        """Extract a numeric price from various JSON shapes."""
-        for key in ("discountPrice", "salePrice", "price"):
-            raw: Any = item.get(key)
-            if raw is None:
-                continue
-            if isinstance(raw, (int, float)):
-                val = float(raw)
-                if val > 0:
-                    return val
-            if isinstance(raw, str):
-                val = BaseScraper.extract_price(raw)
-                if val > 0:
-                    return val
-        return 0.0
+    def _parse_products(
+        self, soup: BeautifulSoup,
+    ) -> list[Product]:
+        """Extract products from HTML using data-ga-* attrs."""
+        card_sel = self.selectors.get(
+            "product_card", "div.product-cell-container"
+        )
+        cards = soup.select(card_sel)
+        products: list[Product] = []
+        for card in cards:
+            product = self._parse_ga_card(card)
+            if product:
+                products.append(product)
+        return products
 
     # ------------------------------------------------------------------
-    # Fallback: CSS-selector scraping
+    # CSS-selector fallback (kept for resilience)
     # ------------------------------------------------------------------
 
     def _parse_card(self, card: Tag) -> Product:
@@ -166,16 +260,6 @@ class IherbScraper(BaseScraper):
             source="iherb",
         )
 
-    def _parse_from_selectors(
-        self, soup: BeautifulSoup,
-    ) -> list[Product]:
-        """Extract products using CSS selectors (fallback)."""
-        card_sel = self.selectors.get("product_card", "")
-        if not card_sel:
-            return []
-        cards = soup.select(card_sel)
-        return [self._parse_card(card) for card in cards]
-
     # ------------------------------------------------------------------
     # Public search entry-point
     # ------------------------------------------------------------------
@@ -202,22 +286,24 @@ class IherbScraper(BaseScraper):
                 if not soup:
                     break
 
-                # Primary: __NEXT_DATA__ embedded JSON
-                page_products = self._extract_from_json(
-                    soup
-                )
-                if page_products:
-                    products.extend(page_products)
-                else:
-                    # Fallback: CSS selectors
-                    css_products = (
-                        self._parse_from_selectors(soup)
+                # Primary: data-ga-* attribute extraction
+                page_products = self._parse_products(soup)
+                if not page_products:
+                    # Fallback: plain CSS selectors
+                    card_sel = self.selectors.get(
+                        "product_card", ""
                     )
-                    if css_products:
-                        products.extend(css_products)
-                    else:
-                        # No products found on this page
-                        break
+                    if card_sel:
+                        cards = soup.select(card_sel)
+                        page_products = [
+                            self._parse_card(c)
+                            for c in cards
+                        ]
+
+                if not page_products:
+                    break
+
+                products.extend(page_products)
 
                 # Stop if no next-page indicator
                 next_sel = self.selectors.get(
@@ -236,27 +322,3 @@ class IherbScraper(BaseScraper):
                 exc_info=True,
             )
             return []
-
-    def _extract_from_json(
-        self, soup: BeautifulSoup,
-    ) -> list[Product]:
-        """Try to extract products from __NEXT_DATA__ script tag."""
-        script = soup.find("script", id="__NEXT_DATA__")
-        if not script or not script.string:
-            return []
-
-        try:
-            data: dict[str, Any] = json.loads(
-                script.string
-            )
-        except (json.JSONDecodeError, TypeError):
-            self.logger.warning(
-                "[iherb] Failed to parse __NEXT_DATA__ JSON"
-            )
-            return []
-
-        items = self._find_products_in_json(data)
-        return [
-            self._parse_json_product(item)
-            for item in items
-        ]

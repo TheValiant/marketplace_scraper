@@ -49,22 +49,50 @@ class BaseScraper(ABC):
         """Sleep using the current (possibly escalated) delay."""
         time.sleep(self._current_delay)
 
+    # Cloudflare challenge page markers (checked before keyword scan)
+    _CF_CHALLENGE_MARKERS: list[str] = [
+        "challenges.cloudflare.com",
+        "cdn-cgi/challenge-platform",
+        "just a moment",
+        "cf-turnstile",
+        "cf_chl_opt",
+    ]
+
     def _validate_response(
         self, resp: curl_requests.Response,
     ) -> bool:
-        """Check for CAPTCHA indicators in non-JSON responses."""
+        """Check for Cloudflare challenge pages and CAPTCHA indicators."""
         text = resp.text
         if text.lstrip().startswith(("{", "[")):
             return True
         lower = text.lower()
-        for keyword in self.settings.CAPTCHA_KEYWORDS:
-            if keyword in lower:
+
+        # Cloudflare challenge page detection (high-confidence)
+        for marker in self._CF_CHALLENGE_MARKERS:
+            if marker in lower:
                 self.logger.warning(
-                    "[%s] CAPTCHA keyword '%s' detected",
+                    "[%s] Cloudflare challenge detected "
+                    "(marker: '%s')",
                     self.source_name,
-                    keyword,
+                    marker,
                 )
                 return False
+
+        # Generic CAPTCHA keyword scan (skip if page has
+        # real product content to avoid false positives)
+        has_body_content = (
+            "<body" in lower and len(text) > 5000
+        )
+        if not has_body_content:
+            for keyword in self.settings.CAPTCHA_KEYWORDS:
+                if keyword in lower:
+                    self.logger.warning(
+                        "[%s] CAPTCHA keyword '%s' "
+                        "detected",
+                        self.source_name,
+                        keyword,
+                    )
+                    return False
         return True
 
     def _record_success(self) -> None:

@@ -31,9 +31,26 @@ class Settings:
     API_KEY_CACHE_TTL: float = 600.0    # BinSina key cache (secs)
 
     # --- Browser Impersonation ---
-    IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome124"
+    IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome131"
     DEFAULT_HEADERS: dict[str, str] = {
+        "Accept": (
+            "text/html,application/xhtml+xml,"
+            "application/xml;q=0.9,image/avif,"
+            "image/webp,image/apng,*/*;q=0.8"
+        ),
         "Accept-Language": "en-US,en;q=0.9",
+        "sec-ch-ua": (
+            '"Google Chrome";v="131", '
+            '"Chromium";v="131", '
+            '"Not_A Brand";v="24"'
+        ),
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "document",
+        "sec-fetch-mode": "navigate",
+        "sec-fetch-site": "none",
+        "sec-fetch-user": "?1",
+        "Upgrade-Insecure-Requests": "1",
     }
 
     # --- Paths ---

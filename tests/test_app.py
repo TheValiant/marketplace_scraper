@@ -169,6 +169,44 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
                 # Only 1 scraper should have been instantiated
                 self.assertEqual(call_count, 1)
 
+    async def test_export_clipboard_copies_tsv(self) -> None:
+        """Verify action_export_clipboard copies TSV to clipboard."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            app.products = [
+                Product(
+                    title="Item",
+                    price=10.0,
+                    currency="AED",
+                    rating="5.0",
+                    url="https://example.com/1",
+                    source="noon",
+                ),
+            ]
+            with patch(
+                "src.ui.app.pyperclip",
+                create=True,
+            ) as mock_clip:
+                mock_clip.copy = MagicMock()
+                with patch.dict(
+                    "sys.modules",
+                    {"pyperclip": mock_clip},
+                ):
+                    app.action_export_clipboard()
+                    await pilot.pause()
+                    mock_clip.copy.assert_called_once()
+                    tsv: str = mock_clip.copy.call_args[0][0]
+                    self.assertIn("Title\tPrice", tsv)
+                    self.assertIn("Item\t10.0", tsv)
+
+    async def test_export_clipboard_empty_warns(self) -> None:
+        """Verify action_export_clipboard warns when no results."""
+        app = EcomSearchApp()
+        async with app.run_test(notifications=True) as pilot:
+            app.action_export_clipboard()
+            await pilot.pause()
+            self.assertEqual(app.products, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -83,3 +83,21 @@ class FileManager:
             filepath,
         )
         return filepath
+
+    def format_tsv(self, products: list[Product]) -> str:
+        """Format products as tab-separated text sorted by price."""
+        sorted_products = sorted(
+            products,
+            key=lambda p: p.price if p.price > 0 else float("inf"),
+        )
+
+        lines: list[str] = [
+            "Title\tPrice\tCurrency\tRating\tSource\tURL",
+        ]
+        for p in sorted_products:
+            lines.append(
+                f"{p.title}\t{p.price}\t{p.currency}"
+                f"\t{p.rating}\t{p.source}\t{p.url}"
+            )
+
+        return "\n".join(lines)
