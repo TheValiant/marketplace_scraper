@@ -207,6 +207,51 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertEqual(app.products, [])
 
+    async def test_invalidate_cache_binding_clears(self) -> None:
+        """Pressing 'i' clears the query cache and notifies."""
+        app = EcomSearchApp()
+        async with app.run_test(notifications=True) as pilot:
+            # Seed the cache
+            app.orchestrator.query_cache.store(
+                "test",
+                frozenset(),
+                frozenset({"noon"}),
+                [
+                    Product(
+                        title="X",
+                        price=10.0,
+                        source="noon",
+                    ),
+                ],
+            )
+            app.action_invalidate_cache()
+            await pilot.pause()
+            # Cache should be empty now
+            result = (
+                app.orchestrator.query_cache.find_subset_match(
+                    "test",
+                    frozenset(),
+                    frozenset({"noon"}),
+                )
+            )
+            self.assertIsNone(result)
+
+    async def test_invalidate_cache_empty_notifies(self) -> None:
+        """Invalidating an empty cache still notifies with 0 count."""
+        app = EcomSearchApp()
+        async with app.run_test(notifications=True) as pilot:
+            app.action_invalidate_cache()
+            await pilot.pause()
+            # No crash; cache is still empty
+            result = (
+                app.orchestrator.query_cache.find_subset_match(
+                    "q",
+                    frozenset(),
+                    frozenset({"noon"}),
+                )
+            )
+            self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()

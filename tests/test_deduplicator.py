@@ -106,3 +106,69 @@ class TestDeduplicate(unittest.TestCase):
         kept, _removed = ProductDeduplicator.deduplicate(products)
         self.assertEqual(len(kept), 1)
         self.assertEqual(kept[0].price, 15.0)
+
+    # ── Extra edge-case tests ────────────────────────────
+
+    def test_single_product_no_dedup(self) -> None:
+        """A single product is kept as-is."""
+        products = [
+            _make("Only One", url="https://a.com/1")
+        ]
+        kept, removed = ProductDeduplicator.deduplicate(products)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(removed, 0)
+
+    def test_all_identical_urls_keeps_cheapest(self) -> None:
+        """Multiple products with the same URL keep only the cheapest."""
+        products = [
+            _make("A", price=30.0, url="https://a.com/x"),
+            _make("B", price=10.0, url="https://a.com/x"),
+            _make("C", price=20.0, url="https://a.com/x"),
+        ]
+        kept, removed = ProductDeduplicator.deduplicate(products)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].price, 10.0)
+        self.assertEqual(removed, 2)
+
+    def test_url_query_params_normalised(self) -> None:
+        """URLs differing only in query params are treated as same."""
+        products = [
+            _make("A", price=10.0, url="https://a.com/p?ref=123"),
+            _make("B", price=5.0, url="https://a.com/p?utm=abc"),
+        ]
+        kept, removed = ProductDeduplicator.deduplicate(products)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].price, 5.0)
+        self.assertEqual(removed, 1)
+
+    def test_unicode_title_normalisation(self) -> None:
+        """Titles with special characters are normalised for matching."""
+        products = [
+            _make(
+                "Collagen™ Powder!",
+                price=10.0,
+                source="noon",
+                url="https://noon.com/1",
+            ),
+            _make(
+                "Collagen Powder",
+                price=8.0,
+                source="noon",
+                url="https://noon.com/2",
+            ),
+        ]
+        kept, removed = ProductDeduplicator.deduplicate(products)
+        # Same source, normalised titles match → deduped
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(kept[0].price, 8.0)
+        self.assertEqual(removed, 1)
+
+    def test_trailing_slash_normalisation(self) -> None:
+        """URLs with/without trailing slashes are treated as same."""
+        products = [
+            _make("A", price=10.0, url="https://a.com/p/"),
+            _make("B", price=5.0, url="https://a.com/p"),
+        ]
+        kept, removed = ProductDeduplicator.deduplicate(products)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(removed, 1)

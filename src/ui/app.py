@@ -42,6 +42,7 @@ class EcomSearchApp(App[object]):
         Binding("r", "sort_rating", "Rating Sort"),
         Binding("c", "copy_url", "Copy URL"),
         Binding("x", "export_clipboard", "Copy All"),
+        Binding("i", "invalidate_cache", "Clear Cache"),
     ]
 
     def __init__(self) -> None:
@@ -372,3 +373,10 @@ class EcomSearchApp(App[object]):
             self.notify(
                 "Install pyperclip", severity="warning"
             )
+
+    def action_invalidate_cache(self) -> None:
+        """Purge the in-memory query result cache."""
+        count = self.orchestrator.query_cache.clear()
+        self.notify(
+            f"Cache cleared ({count} entries purged)"
+        )

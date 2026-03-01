@@ -19,6 +19,8 @@ A modular, local e-commerce price comparison engine for UAE markets. Search acro
 
 - **Multi-source concurrent search** — scrape all 6 marketplaces in parallel with a single query
 - **Multi-query support** — search multiple terms at once using `;` as separator (e.g., `collagen;vitamin d;krill oil`)
+- **Advanced boolean search** — combine terms with `AND`, `OR`, quoted phrases, parentheses, and inline negations (e.g., `("multi collagen" OR "types I II III") AND powder -serum -cream`)
+- **Deterministic subset caching** — in-memory result cache with set-theoretic subset matching; repeat / narrower searches return instantly with zero network calls
 - **Source selection** — toggle individual marketplaces on/off via checkboxes
 - **Negative keyword filtering** — exclude irrelevant products using comma-separated exclusion keywords (dual-layer: pre-scrape query enhancement + post-scrape title filtering)
 - **Product validation** — automatically drops products with empty titles or zero/negative prices
@@ -122,12 +124,15 @@ python main.py
 | `e` | Export results to CSV |
 | `c` | Copy selected product URL to clipboard |
 | `x` | Copy all results to clipboard (TSV format) |
+| `i` | Invalidate (clear) the in-memory query cache |
 | Click row | Open product URL in default browser |
 
 ### Search Workflow
 
-1. **Type your search query** in the search input (e.g., `multi collagen peptides hyaluronic`)
-   - Use `;` to search multiple terms at once: `collagen;vitamin d;krill oil`
+1. **Type your search query** in the search input — three modes are supported:
+   - **Simple**: `multi collagen peptides hyaluronic`
+   - **Multi-query** (semicolons): `collagen;vitamin d;krill oil`
+   - **Boolean** (auto-detected): `("multi collagen" OR "types I II III") AND powder -serum -cream`
 2. **Add exclusion keywords** (optional) in the filter input, comma-separated (e.g., `serum, cream, mask, lotion, shampoo`)
 3. **Toggle sources** — uncheck any marketplaces you want to skip
 4. **Press Enter or click Search** — scrapers run concurrently
@@ -156,6 +161,111 @@ The filter is case-insensitive and uses substring matching. The status bar shows
 | Electronics/laptops | `case, sleeve, screen protector, sticker, skin, stand` |
 | Books | `kindle, audiobook, summary, workbook` |
 | Shoes | `laces, insole, cleaner, polish, tree` |
+
+### Advanced Boolean Search
+
+The search input supports full boolean query syntax. When the engine detects boolean operators (`AND`, `OR`, parentheses, or quoted phrases), it automatically activates the advanced pipeline.
+
+#### Syntax Reference
+
+| Element | Syntax | Example | Meaning |
+|---|---|---|---|
+| **Term** | bare word | `collagen` | Match products containing "collagen" |
+| **Phrase** | `"quoted words"` | `"multi collagen"` | Match the exact phrase "multi collagen" |
+| **AND** | `AND` or adjacent terms | `collagen AND powder` | Both terms must appear |
+| **Implicit AND** | space-separated | `collagen powder` | Same as `collagen AND powder` |
+| **OR** | `OR` | `collagen OR peptides` | Either term may appear |
+| **Grouping** | `( )` | `(A OR B) AND C` | Override default precedence |
+| **Negation** | `-keyword` | `-serum -cream` | Exclude products containing these words (**boolean mode only** — requires quotes, `AND`, `OR`, or parentheses elsewhere in the query) |
+
+**Operator precedence** (highest to lowest): Grouping `()` > `AND` / implicit AND > `OR`
+
+#### How It Works
+
+1. **Parse**: The query is tokenized and parsed into an Abstract Syntax Tree (AST) using a recursive-descent parser.
+2. **Extract negatives**: Trailing `-keyword` tokens are pulled out as global exclusions.
+3. **DNF expansion**: The AST is converted to [Disjunctive Normal Form](https://en.wikipedia.org/wiki/Disjunctive_normal_form) (OR of ANDs). Each conjunction becomes an independent base query dispatched to the scrapers in parallel.
+4. **AST verification**: After scraping, every product title is evaluated against the original AST. Products that don't logically satisfy the boolean expression are removed — this catches fuzzy/irrelevant results from search engines that ignore quotes or boolean operators.
+5. **Negative filtering**: Products matching any `-keyword` are excluded.
+6. **Deduplication**: Cross-query and cross-source duplicates are merged, keeping the cheapest.
+
+#### Examples
+
+**Simple OR expansion:**
+
+```
+"multi collagen" OR "hydrolyzed collagen"
+```
+
+Dispatches 2 base queries → `multi collagen` and `hydrolyzed collagen` → merges and deduplicates results.
+
+**Complex boolean with negations:**
+
+```
+("multi collagen" OR "types I II III V X") AND "hyaluronic" AND powder -serum -cream -mask -gummies
+```
+
+Dispatches 2 base queries:
+- `multi collagen hyaluronic powder`
+- `types I II III V X hyaluronic powder`
+
+Then locally verifies every result title contains the required phrases, and excludes any product matching `serum`, `cream`, `mask`, or `gummies`.
+
+**Mixing with the filter input:**
+
+In **boolean mode** (queries containing quotes, `AND`, `OR`, or parentheses), negations can appear in both places. `-keywords` embedded in the search query and comma-separated keywords in the filter input are merged. These two are equivalent:
+
+- Search: `"multi collagen" -serum`, Filter: `cream, mask`
+- Search: `"multi collagen" -serum -cream -mask`, Filter: *(empty)*
+
+> **Note:** In simple (non-boolean) mode, `-keyword` in the search input is NOT parsed as an exclusion — it is sent as raw text to the search engine. Use the **filter input** for reliable exclusion on all platforms.
+
+#### Auto-Detection
+
+The engine auto-routes queries based on syntax:
+
+| Query | Detected as | Pipeline |
+|---|---|---|
+| `collagen` | Simple | Standard `search()` |
+| `collagen;vitamin d` | Multi-query | Sequential `search()` + cross-query dedup |
+| `collagen -serum` | Simple | Standard `search()` — the `-serum` is sent as raw text; works natively on Amazon/iHerb but is **not** parsed or applied as a local filter. Use the filter input for reliable cross-platform exclusion. |
+| `"multi collagen"` | Boolean (quotes) | Advanced `execute_advanced_search()` |
+| `collagen AND powder` | Boolean (AND) | Advanced `execute_advanced_search()` |
+| `collagen OR peptides` | Boolean (OR) | Advanced `execute_advanced_search()` |
+| `(collagen OR peptides) AND powder` | Boolean (parens + operators) | Advanced `execute_advanced_search()` |
+
+### Deterministic Subset Caching
+
+The engine maintains an in-memory result cache that exploits set-theoretic relationships between queries to avoid redundant network calls.
+
+#### How It Works
+
+Every search result is cached with three keys: **base query**, **negative terms**, and **source set**. On subsequent searches, the cache checks whether an existing entry can satisfy the new request:
+
+- A cached entry with **fewer** (or equal) negative exclusions than the requested query means the cached data is a **superset** — it contains everything the new query needs, plus some extra items that can be filtered locally.
+- The cached entry must have the **same base query** and the **same source set** (adding a new marketplace forces a fresh scrape).
+
+#### Subset Matching Logic
+
+```
+Cache hit when:
+  cached.base_query == requested.base_query
+  AND cached.source_ids == requested.source_ids
+  AND cached.negative_terms ⊆ requested.negative_terms
+```
+
+#### Examples
+
+| Step | Search | Cache State | Result |
+|---|---|---|---|
+| 1 | `collagen` (Amazon, Noon) | Empty | **MISS** — scrapes both sources, caches raw results |
+| 2 | `collagen` (Amazon, Noon) | Has entry from step 1 | **HIT** — returns cached results instantly |
+| 3 | `collagen -mask` (Amazon, Noon) | Has entry from step 1 (no negatives) | **HIT** — cached `{}` ⊆ requested `{mask}` → filters "mask" locally |
+| 4 | `collagen -mask -serum` (Amazon, Noon) | Has entry from step 1 (no negatives) | **HIT** — cached `{}` ⊆ `{mask, serum}` → filters both locally |
+| 5 | `collagen` (Amazon, Noon, iHerb) | Has entry from step 1 (Amazon, Noon only) | **MISS** — source set changed, re-scrapes all 3 |
+| 6 | `vitamin d` (Amazon, Noon) | Has entry for "collagen" only | **MISS** — different base query |
+
+Cache entries expire after `QUERY_CACHE_TTL` seconds (default: 1 hour). The cache stores results **post-validation but pre-filtering** — validated data (no empty titles or zero prices) but with all products intact, so narrower searches can filter locally without re-scraping.
 
 ## Project Structure
 
@@ -191,11 +301,13 @@ marketplace_scraper/
 │   ├── filters/
 │   │   ├── product_filter.py        # Post-scrape filtering by negative keywords
 │   │   ├── query_enhancer.py        # Pre-scrape query enhancement
+│   │   ├── query_parser.py          # Boolean query compiler (tokenizer, AST, DNF, evaluator)
 │   │   ├── deduplicator.py          # URL + same-source title deduplication
 │   │   └── product_validator.py     # Drop products with empty titles / zero prices
 │   │
 │   ├── storage/
-│   │   └── file_manager.py          # JSON/CSV export, clipboard formatting
+│   │   ├── file_manager.py          # JSON/CSV export, clipboard formatting
+│   │   └── query_cache.py           # In-memory deterministic subset cache
 │   │
 │   └── ui/
 │       ├── app.py                   # EcomSearchApp (Textual TUI)
@@ -210,6 +322,10 @@ marketplace_scraper/
 
 ### Data Flow
 
+The engine supports two pipelines, selected automatically based on query syntax.
+
+#### Standard Pipeline (simple queries, semicolon multi-queries)
+
 ```
 User Input (query + exclusion keywords)
          │
@@ -219,6 +335,12 @@ User Input (query + exclusion keywords)
 │  (multi_search /        │
 │   search)               │
 └─────────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│   QueryCache        │──▶ Check for subset cache hit
+│   (subset match?)   │    HIT → skip scrapers, filter locally
+└─────────────────────┘    MISS ↓
          │
          ▼
 ┌─────────────────────┐
@@ -241,7 +363,7 @@ User Input (query + exclusion keywords)
 │  ProductValidator   │──▶ Drops empty titles / zero prices
 └─────────────────────┘
          │
-         ▼ validated list[Product]
+         ▼ validated → stored in QueryCache
 ┌─────────────────────┐
 │   ProductFilter     │──▶ Removes products matching exclusion keywords
 └─────────────────────┘
@@ -259,6 +381,59 @@ User Input (query + exclusion keywords)
          ▼
 ┌─────────────────────┐
 │   FileManager       │──▶ Auto-save JSON, export CSV/TSV
+└─────────────────────┘
+```
+
+#### Advanced Pipeline (boolean queries with AND, OR, quotes, parens)
+
+```
+User Input (boolean query + exclusion keywords)
+         │
+         ▼
+┌─────────────────────────┐
+│  QueryPlanner.parse()   │──▶ Tokenize → AST → DNF expansion
+│  ├── AST                │    Extracts global negatives
+│  ├── base_queries[]     │    Produces N flat base queries
+│  └── global_negatives   │
+└─────────────────────────┘
+         │
+    ┌────┴────┐  (for each base query)
+    ▼         ▼
+┌────────┐ ┌────────┐
+│Cache?  │ │Cache?  │──▶ HIT → use cached results
+│ MISS   │ │  HIT   │    MISS → scrape via _run_scrapers()
+└───┬────┘ └────────┘
+    ▼
+┌─────────────────────┐    Results cached
+│  _run_scrapers()    │──▶ post-validation
+│  (QueryEnhancer +   │
+│   concurrent scrape)│
+└─────────────────────┘
+         │
+         ▼ merged list[Product]
+┌─────────────────────┐
+│  ProductValidator   │──▶ Drops empty titles / zero prices
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│  AST Evaluator      │──▶ local_evaluate(title, AST)
+│  (local_evaluate)   │    Removes products that don't satisfy
+└─────────────────────┘    the boolean expression
+         │
+         ▼
+┌─────────────────────┐
+│   ProductFilter     │──▶ Removes products matching negatives
+└─────────────────────┘
+         │
+         ▼
+┌─────────────────────┐
+│ ProductDeduplicator │──▶ Cross-query + cross-source dedup
+└─────────────────────┘
+         │
+         ▼ final list[Product]
+┌─────────────────────┐
+│   TUI (DataTable)   │──▶ Display, sort, highlight cheapest
 └─────────────────────┘
 ```
 
@@ -295,6 +470,7 @@ All tuneable constants live in `src/config/settings.py`. No magic numbers in scr
 | `MAX_DELAY_MULTIPLIER` | `8` | Cap for adaptive backoff multiplier |
 | `IMPERSONATE_BROWSER` | `chrome131` | Browser to impersonate in curl_cffi |
 | `QUERY_ENHANCED_PLATFORMS` | `["amazon", "iherb"]` | Platforms supporting `-keyword` query syntax |
+| `QUERY_CACHE_TTL` | `3600.0` | In-memory result cache time-to-live (seconds) |
 
 ### Per-Source Timeout
 

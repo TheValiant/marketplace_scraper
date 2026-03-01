@@ -171,6 +171,44 @@ class TestFileManager(unittest.TestCase):
             "Title\tPrice\tCurrency\tRating\tSource\tURL",
         )
 
+    # ── Extra edge-case tests ────────────────────────────
+
+    def test_save_results_special_chars_in_query(self) -> None:
+        """Spaces in query are replaced for the filename."""
+        products = self._sample_products()
+        path = self.fm.save_results(
+            "multi collagen", products, "combined"
+        )
+        self.assertIn("multi_collagen", path.name)
+        self.assertTrue(path.exists())
+
+    def test_format_tsv_with_tab_in_title(self) -> None:
+        """Tab characters in product titles appear literally in TSV."""
+        products = [
+            Product(
+                title="Tab\there",
+                price=5.0,
+                currency="AED",
+                rating="",
+                url="",
+                source="test",
+            ),
+        ]
+        result = self.fm.format_tsv(products)
+        data_line = result.split("\n")[1]
+        # Title field itself contains a tab, so column count increases
+        self.assertIn("Tab", data_line)
+        self.assertIn("here", data_line)
+
+    def test_export_csv_special_chars_in_query(self) -> None:
+        """Spaces in query are replaced for CSV filename."""
+        products = self._sample_products()
+        path = self.fm.export_csv(
+            "krill oil", products, "combined"
+        )
+        self.assertIn("krill_oil", path.name)
+        self.assertTrue(path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

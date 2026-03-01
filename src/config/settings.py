@@ -30,6 +30,7 @@ class Settings:
         "automated requests",
     ]
     API_KEY_CACHE_TTL: float = 600.0    # BinSina key cache (secs)
+    QUERY_CACHE_TTL: float = 3600.0     # In-memory result cache (secs)
 
     # --- Filtering ---
     QUERY_ENHANCED_PLATFORMS: list[str] = ["amazon", "iherb"]

@@ -84,3 +84,33 @@ class TestProductValidator(unittest.TestCase):
         valid, dropped = ProductValidator.validate(products)
         self.assertEqual(len(valid), 0)
         self.assertEqual(dropped, 3)
+
+    # ── Extra edge-case tests ────────────────────────────
+
+    def test_tab_only_title_dropped(self) -> None:
+        """A title containing only tabs/newlines is dropped."""
+        products = [_p("\t\n", 10.0)]
+        valid, dropped = ProductValidator.validate(products)
+        self.assertEqual(len(valid), 0)
+        self.assertEqual(dropped, 1)
+
+    def test_very_large_price_valid(self) -> None:
+        """A very large positive price passes validation."""
+        products = [_p("Expensive", 999_999_999.99)]
+        valid, dropped = ProductValidator.validate(products)
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(dropped, 0)
+
+    def test_all_valid_no_drops(self) -> None:
+        """When every product is valid, nothing is dropped."""
+        products = [_p("A", 5.0), _p("B", 10.0), _p("C", 1.0)]
+        valid, dropped = ProductValidator.validate(products)
+        self.assertEqual(len(valid), 3)
+        self.assertEqual(dropped, 0)
+
+    def test_mixed_whitespace_title_with_text_valid(self) -> None:
+        """A title with leading whitespace but real text passes."""
+        products = [_p("  Valid Title  ", 10.0)]
+        valid, dropped = ProductValidator.validate(products)
+        self.assertEqual(len(valid), 1)
+        self.assertEqual(dropped, 0)

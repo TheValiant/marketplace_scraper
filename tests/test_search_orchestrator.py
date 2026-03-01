@@ -210,3 +210,65 @@ class TestMultiSearch(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(
             result.total_before_filter, 6
         )
+
+
+class TestSearchOrchestratorCache(
+    unittest.IsolatedAsyncioTestCase
+):
+    """Cache interaction tests for SearchOrchestrator."""
+
+    @patch(LOAD_PATH, return_value=_make_fake_cls())
+    async def test_cache_hit_skips_scrapers(
+        self, mock_load: object,
+    ) -> None:
+        """A cache hit means scrapers are NOT called a second time."""
+        orch = SearchOrchestrator()
+        # First search → cache miss → scrapers called
+        await orch.search("collagen", FAKE_SOURCE)
+
+        # Second identical search → cache hit
+        result2 = await orch.search("collagen", FAKE_SOURCE)
+        self.assertEqual(result2.cache_hits, 1)
+
+    @patch(LOAD_PATH, return_value=_make_fake_cls())
+    async def test_cache_stores_after_scrape(
+        self, _mock_load: object,
+    ) -> None:
+        """After a scrape, results are stored in the cache."""
+        orch = SearchOrchestrator()
+        await orch.search("collagen", FAKE_SOURCE)
+
+        cached = orch.query_cache.find_subset_match(
+            "collagen",
+            frozenset(),
+            frozenset({"test"}),
+        )
+        self.assertIsNotNone(cached)
+
+    @patch(LOAD_PATH, return_value=_make_fake_cls())
+    async def test_cache_clear_forces_rescrape(
+        self, mock_load: object,
+    ) -> None:
+        """After invalidation, next search re-scrapes."""
+        orch = SearchOrchestrator()
+        await orch.search("collagen", FAKE_SOURCE)
+        orch.query_cache.clear()
+
+        result2 = await orch.search("collagen", FAKE_SOURCE)
+        # Cache was cleared, so this is a miss (cache_hits=0)
+        self.assertEqual(result2.cache_hits, 0)
+
+    @patch(LOAD_PATH, return_value=_make_fake_cls())
+    async def test_cache_subset_negatives_hit(
+        self, _mock_load: object,
+    ) -> None:
+        """A broader cached result serves a narrower negative query."""
+        orch = SearchOrchestrator()
+        # Cache with no negatives
+        await orch.search("collagen", FAKE_SOURCE)
+
+        # Narrower query (with negatives) should hit the cache
+        result = await orch.search(
+            "collagen", FAKE_SOURCE, ["serum"]
+        )
+        self.assertEqual(result.cache_hits, 1)

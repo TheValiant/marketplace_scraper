@@ -600,3 +600,5 @@ coding_standards:
       rationale: "Reduces repository bloat and security risks."
       severity: critical
       auto_check: partially
+
+add commit and push with proper description after every milestone
