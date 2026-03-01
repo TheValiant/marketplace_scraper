@@ -1,28 +1,105 @@
 # main.py
 
-"""Entry point for the ecom_search TUI application."""
+"""Entry point for the ecom_search application (TUI or headless CLI)."""
 
+import argparse
+import asyncio
 import logging
+import sys
 
 from src.config.logging_config import setup_logging
-from src.ui.app import EcomSearchApp
+from src.config.settings import Settings
 
 logger = logging.getLogger("ecom_search.main")
 
 
-def main():
-    """Launch the ecom_search TUI application."""
-    log_file = setup_logging()
-    logger.info("ecom_search starting — log file: %s", log_file)
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the argument parser for the CLI."""
+    valid_ids = ", ".join(s["id"] for s in Settings.AVAILABLE_SOURCES)
+
+    parser = argparse.ArgumentParser(
+        prog="ecom_search",
+        description="UAE e-commerce price comparison engine.",
+        epilog=f"Available sources: {valid_ids}",
+    )
+    parser.add_argument(
+        "query",
+        nargs="?",
+        default=None,
+        help="Search query. Omit to launch the interactive TUI.",
+    )
+    parser.add_argument(
+        "-s",
+        "--sources",
+        default=None,
+        help="Comma-separated source IDs (default: all).",
+    )
+    parser.add_argument(
+        "-e",
+        "--exclude",
+        default=None,
+        help="Comma-separated negative keywords to filter out.",
+    )
+    parser.add_argument(
+        "-f",
+        "--format",
+        choices=["json", "table"],
+        default="json",
+        dest="output_format",
+        help="Output format (default: json).",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        dest="output_dir",
+        help="Custom output directory (default: results/).",
+    )
+    return parser
+
+
+def _run_tui() -> None:
+    """Launch the interactive Textual TUI."""
+    from src.ui.app import EcomSearchApp
 
     try:
         app = EcomSearchApp()
         app.run()
     except Exception:
-        logger.critical("Fatal error during application run", exc_info=True)
+        logger.critical("Fatal error during TUI run", exc_info=True)
         raise
     finally:
-        logger.info("ecom_search shutting down")
+        logger.info("ecom_search TUI shutting down")
+
+
+def _run_cli(args: argparse.Namespace) -> None:
+    """Run headless CLI search and exit."""
+    from src.cli.runner import cli_search
+
+    exit_code = asyncio.run(
+        cli_search(
+            query=args.query,
+            source_csv=args.sources,
+            exclude_csv=args.exclude,
+            output_format=args.output_format,
+            output_dir=args.output_dir,
+        )
+    )
+    sys.exit(exit_code)
+
+
+def main() -> None:
+    """Route to TUI (no args) or headless CLI (query provided)."""
+    log_file = setup_logging()
+    logger.info("ecom_search starting — log file: %s", log_file)
+
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.query is None:
+        _run_tui()
+    else:
+        _run_cli(args)
 
 
 if __name__ == "__main__":
