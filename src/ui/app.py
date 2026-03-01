@@ -24,6 +24,8 @@ from textual.widgets import (
 )
 
 from src.config.settings import Settings
+from src.filters.product_filter import ProductFilter
+from src.filters.query_enhancer import QueryEnhancer
 from src.models.product import Product
 from src.storage.file_manager import FileManager
 
@@ -98,6 +100,15 @@ class EcomSearchApp(App[object]):
                 id="search_bar",
             ),
 
+            # Negative Keyword Filter
+            Input(
+                placeholder=(
+                    "Exclude keywords (comma-separated),"
+                    " e.g. serum, cream, mask..."
+                ),
+                id="filter_input",
+            ),
+
             # Source Selection Checkboxes (collapsible)
             Collapsible(
                 *checkbox_rows,
@@ -137,6 +148,26 @@ class EcomSearchApp(App[object]):
         if event.input.id == "search_input":
             await self.perform_search()
 
+    def _get_selected_sources(self) -> list[dict[str, str]]:
+        """Return the list of sources whose checkboxes are checked."""
+        selected: list[dict[str, str]] = []
+        for src in self.settings.AVAILABLE_SOURCES:
+            checkbox = self.query_one(
+                f"#check_{src['id']}", Checkbox
+            )
+            if checkbox.value:
+                selected.append(src)
+        return selected
+
+    def _parse_negative_keywords(self) -> list[str]:
+        """Parse comma-separated negative keywords from the filter input."""
+        filter_input = self.query_one("#filter_input", Input)
+        return [
+            kw.strip()
+            for kw in filter_input.value.split(",")
+            if kw.strip()
+        ]
+
     async def perform_search(self) -> None:
         """Execute a search against the selected sources."""
         search_input = self.query_one(
@@ -149,17 +180,12 @@ class EcomSearchApp(App[object]):
             )
             return
 
-        # --- Collect selected sources from the registry ---
-        selected_sources: list[dict[str, str]] = []
-        for src in self.settings.AVAILABLE_SOURCES:
-            checkbox_id = f"#check_{src['id']}"
-            checkbox = self.query_one(checkbox_id, Checkbox)
-            if checkbox.value:
-                selected_sources.append(src)
-
+        selected_sources = self._get_selected_sources()
         if not selected_sources:
             self.notify("Select at least one source!", severity="error")
             return
+
+        negative_keywords = self._parse_negative_keywords()
 
         self.current_query = query
         self.products = []
@@ -174,16 +200,21 @@ class EcomSearchApp(App[object]):
         # Build task list from checked sources dynamically
         async def run_scraper(
             scraper_path: str,
+            platform_id: str,
         ) -> list[Product]:
             """Run a blocking scraper in a thread."""
+            enhanced_query = QueryEnhancer.enhance_query(
+                query, negative_keywords, platform_id
+            )
             scraper_cls = _load_scraper_class(scraper_path)
             result: list[Product] = await asyncio.to_thread(
-                scraper_cls().search, query
+                scraper_cls().search, enhanced_query
             )
             return result
 
         tasks = [
-            run_scraper(src["scraper"]) for src in selected_sources
+            run_scraper(src["scraper"], src["id"])
+            for src in selected_sources
         ]
 
         # Execute selected tasks concurrently
@@ -201,6 +232,12 @@ class EcomSearchApp(App[object]):
                 )
                 self.notify(f"Error: {batch}", severity="error")
 
+        # --- Post-scrape filtering ---
+        total_before = len(self.products)
+        self.products, excluded = ProductFilter.filter_by_keywords(
+            self.products, negative_keywords
+        )
+
         self.populate_table()
 
         if not self.products:
@@ -208,9 +245,17 @@ class EcomSearchApp(App[object]):
         else:
             # Auto-save results to disk
             self._auto_save_results()
-            status.update(
-                f"✅ Found {len(self.products)} products (saved)"
-            )
+            if excluded:
+                status.update(
+                    f"✅ Showing {len(self.products)} of"
+                    f" {total_before} products"
+                    f" ({excluded} filtered out, saved)"
+                )
+            else:
+                status.update(
+                    f"✅ Found {len(self.products)}"
+                    f" products (saved)"
+                )
 
     def _auto_save_results(self) -> None:
         """Automatically save search results after every successful search."""

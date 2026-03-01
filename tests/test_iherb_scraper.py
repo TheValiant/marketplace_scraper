@@ -204,6 +204,10 @@ class TestIherbScraper(unittest.TestCase):
                 "https://ae.iherb.com/pr/"
             )
         )
+        self.assertIn(
+            "cloudinary.images-iherb.com",
+            products[0].image_url,
+        )
 
     # ------------------------------------------------------------------
     # Error handling

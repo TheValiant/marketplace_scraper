@@ -22,8 +22,8 @@
         "title": "div.product-title",
         "price": "span.price",
         "currency": "",
-        "rating": "a.rating-count",
-        "url": "a.absolute-link",
+        "rating": "a.stars",
+        "url": "a.product-link",
         "next_page": "a.pagination-next"
     }
 }

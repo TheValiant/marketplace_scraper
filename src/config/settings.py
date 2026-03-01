@@ -30,6 +30,9 @@ class Settings:
     ]
     API_KEY_CACHE_TTL: float = 600.0    # BinSina key cache (secs)
 
+    # --- Filtering ---
+    QUERY_ENHANCED_PLATFORMS: list[str] = ["amazon", "iherb"]
+
     # --- Browser Impersonation ---
     IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome131"
     DEFAULT_HEADERS: dict[str, str] = {

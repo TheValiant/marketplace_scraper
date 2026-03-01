@@ -25,6 +25,11 @@
     min-width: 10;
 }
 
+/* --- Negative Keyword Filter --- */
+#filter_input {
+    margin: 0 1;
+}
+
 /* --- Source Selection Checkboxes (Collapsible) --- */
 #source_toggles {
     height: auto;
