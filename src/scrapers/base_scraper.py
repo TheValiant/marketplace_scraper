@@ -35,6 +35,10 @@ class BaseScraper(ABC):
         )
         self._consecutive_failures: int = 0
         self._circuit_open: bool = False
+        self._circuit_opened_at: float = 0.0
+        self._request_timeout: int = (
+            self.settings.REQUEST_TIMEOUT
+        )
 
     def _load_selectors(self) -> dict[str, str]:
         """Load CSS selectors for this source from selectors.json."""
@@ -95,9 +99,30 @@ class BaseScraper(ABC):
                     return False
         return True
 
+    def _check_circuit(self) -> bool:
+        """Return True if the circuit breaker blocks this request.
+
+        After CIRCUIT_BREAKER_COOLDOWN seconds the breaker enters
+        a half-open state, allowing a single probe request through.
+        """
+        if not self._circuit_open:
+            return False
+        elapsed = time.time() - self._circuit_opened_at
+        if elapsed >= self.settings.CIRCUIT_BREAKER_COOLDOWN:
+            self.logger.info(
+                "[%s] Circuit breaker half-open after %.0fs",
+                self.source_name,
+                elapsed,
+            )
+            self._circuit_open = False
+            return False
+        return True
+
     def _record_success(self) -> None:
         """Reset failure counters after a successful fetch."""
         self._consecutive_failures = 0
+        self._circuit_open = False
+        self._circuit_opened_at = 0.0
         self._current_delay = self.settings.REQUEST_DELAY
 
     def _record_failure(self) -> None:
@@ -108,6 +133,7 @@ class BaseScraper(ABC):
         )
         if self._consecutive_failures >= threshold:
             self._circuit_open = True
+            self._circuit_opened_at = time.time()
             self.logger.error(
                 "[%s] Circuit breaker opened after %d "
                 "consecutive failures",
@@ -136,14 +162,14 @@ class BaseScraper(ABC):
         headers: dict[str, str],
     ) -> curl_requests.Response | None:
         """GET with retries, adaptive delay, and circuit breaker."""
-        if self._circuit_open:
+        if self._check_circuit():
             return None
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.get(
                     url,
                     headers=headers,
-                    timeout=self.settings.REQUEST_TIMEOUT,
+                    timeout=self._request_timeout,
                 )
                 if resp.status_code == 200:
                     if not self._validate_response(resp):
@@ -182,7 +208,7 @@ class BaseScraper(ABC):
         payload: dict[str, Any],
     ) -> curl_requests.Response | None:
         """POST with retries, adaptive delay, and circuit breaker."""
-        if self._circuit_open:
+        if self._check_circuit():
             return None
         for attempt in range(self.settings.MAX_RETRIES):
             try:
@@ -190,7 +216,7 @@ class BaseScraper(ABC):
                     url,
                     headers=headers,
                     json=payload,
-                    timeout=self.settings.REQUEST_TIMEOUT,
+                    timeout=self._request_timeout,
                 )
                 if resp.status_code == 200:
                     if not self._validate_response(resp):
@@ -224,7 +250,7 @@ class BaseScraper(ABC):
 
     def _get_page(self, url: str) -> BeautifulSoup | None:
         """Fetch a page, falling back to cloudscraper on failure."""
-        if self._circuit_open:
+        if self._check_circuit():
             return None
         headers: dict[str, str] = {
             **self.settings.DEFAULT_HEADERS,
@@ -248,7 +274,7 @@ class BaseScraper(ABC):
             fallback_resp: Any = scraper.get(
                 url,
                 headers=headers,
-                timeout=self.settings.REQUEST_TIMEOUT,
+                timeout=self._request_timeout,
             )
             if fallback_resp.status_code == 200:
                 return BeautifulSoup(

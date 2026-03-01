@@ -2,6 +2,7 @@
 
 """Tests for BaseScraper resilience features."""
 
+import time
 import unittest
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -34,9 +35,31 @@ class _StubScraper(BaseScraper):
         self._circuit_open = value
 
     @property
+    def circuit_opened_at(self) -> float:
+        """Expose circuit breaker timestamp."""
+        return self._circuit_opened_at
+
+    @circuit_opened_at.setter
+    def circuit_opened_at(self, value: float) -> None:
+        self._circuit_opened_at = value
+
+    @property
     def consecutive_failures(self) -> int:
         """Expose failure counter."""
         return self._consecutive_failures
+
+    @consecutive_failures.setter
+    def consecutive_failures(self, value: int) -> None:
+        self._consecutive_failures = value
+
+    @property
+    def request_timeout(self) -> int:
+        """Expose request timeout."""
+        return self._request_timeout
+
+    @request_timeout.setter
+    def request_timeout(self, value: int) -> None:
+        self._request_timeout = value
 
     @property
     def current_delay(self) -> float:
@@ -154,6 +177,7 @@ class TestCircuitBreaker(unittest.TestCase):
         scraper = _StubScraper("test")
         scraper.session = mock_session
         scraper.circuit_open = True
+        scraper.circuit_opened_at = time.time()
 
         result = scraper.fetch_post(
             "https://example.com", {}, {}
@@ -171,10 +195,85 @@ class TestCircuitBreaker(unittest.TestCase):
         scraper = _StubScraper("test")
         scraper.session = mock_session
         scraper.circuit_open = True
+        scraper.circuit_opened_at = time.time()
 
         result = scraper.get_page("https://example.com")
         self.assertIsNone(result)
         mock_session.get.assert_not_called()
+
+
+@patch("src.scrapers.base_scraper.curl_requests.Session")
+class TestCircuitBreakerCooldown(unittest.TestCase):
+    """Circuit breaker half-open reset after cooldown."""
+
+    def test_circuit_resets_after_cooldown(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """After cooldown period, breaker opens for a probe and resets on success."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = '{"ok": true}'
+        mock_session.get.return_value = ok_resp
+
+        scraper = _StubScraper("test")
+        scraper.session = mock_session
+        scraper.circuit_open = True
+        cooldown = scraper.settings.CIRCUIT_BREAKER_COOLDOWN
+        scraper.circuit_opened_at = time.time() - cooldown - 1
+
+        result = scraper.fetch_get(
+            "https://example.com", {}
+        )
+        self.assertIsNotNone(result)
+        mock_session.get.assert_called()
+        self.assertFalse(scraper.circuit_open)
+        self.assertEqual(scraper.consecutive_failures, 0)
+
+    def test_circuit_blocks_before_cooldown(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """Before cooldown elapses, breaker blocks all requests."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        scraper = _StubScraper("test")
+        scraper.session = mock_session
+        scraper.circuit_open = True
+        scraper.circuit_opened_at = time.time()
+
+        result = scraper.fetch_get(
+            "https://example.com", {}
+        )
+        self.assertIsNone(result)
+        mock_session.get.assert_not_called()
+
+    def test_circuit_reopens_on_probe_failure(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """If the probe after cooldown fails, circuit re-opens."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        fail_resp = MagicMock()
+        fail_resp.status_code = 500
+        mock_session.get.return_value = fail_resp
+
+        scraper = _StubScraper("test")
+        scraper.session = mock_session
+        scraper.circuit_open = True
+        cooldown = scraper.settings.CIRCUIT_BREAKER_COOLDOWN
+        scraper.circuit_opened_at = time.time() - cooldown - 1
+
+        # Ensure we're near threshold so probe failure re-opens
+        threshold = scraper.settings.CIRCUIT_BREAKER_THRESHOLD
+        scraper.consecutive_failures = threshold - 1
+
+        result = scraper.fetch_get(
+            "https://example.com", {}
+        )
+        self.assertIsNone(result)
+        self.assertTrue(scraper.circuit_open)
 
 
 @patch("src.scrapers.base_scraper.curl_requests.Session")
@@ -345,3 +444,47 @@ class TestWaitMethod(unittest.TestCase):
         scraper.current_delay = 5.0
         scraper.wait()
         mock_sleep.assert_called_with(5.0)
+
+
+@patch("src.scrapers.base_scraper.curl_requests.Session")
+class TestRequestTimeout(unittest.TestCase):
+    """Per-source timeout override on BaseScraper."""
+
+    def test_timeout_defaults_to_settings(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """Default request_timeout matches Settings.REQUEST_TIMEOUT."""
+        mock_session_cls.return_value = MagicMock()
+        scraper = _StubScraper("test")
+        self.assertEqual(
+            scraper.request_timeout,
+            scraper.settings.REQUEST_TIMEOUT,
+        )
+
+    def test_timeout_override_applied(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """Setting request_timeout overrides the default."""
+        mock_session_cls.return_value = MagicMock()
+        scraper = _StubScraper("test")
+        scraper.request_timeout = 20
+        self.assertEqual(scraper.request_timeout, 20)
+
+    def test_overridden_timeout_used_in_fetch(
+        self, mock_session_cls: MagicMock,
+    ) -> None:
+        """fetch_get uses the overridden timeout value."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = '{"ok": true}'
+        mock_session.get.return_value = ok_resp
+
+        scraper = _StubScraper("test")
+        scraper.session = mock_session
+        scraper.request_timeout = 25
+
+        scraper.fetch_get("https://example.com", {})
+        call_kwargs = mock_session.get.call_args
+        self.assertEqual(call_kwargs.kwargs["timeout"], 25)

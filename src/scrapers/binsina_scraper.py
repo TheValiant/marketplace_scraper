@@ -7,6 +7,8 @@ import re
 import time
 from typing import Any, cast
 
+from curl_cffi import requests as curl_requests
+
 from src.models.product import Product
 from src.scrapers.base_scraper import BaseScraper
 
@@ -45,7 +47,7 @@ class BinSinaScraper(BaseScraper):
             resp = self.session.get(
                 self.HOMEPAGE_URL,
                 headers=headers,
-                timeout=self.settings.REQUEST_TIMEOUT,
+                timeout=self._request_timeout,
             )
             if resp.status_code != 200:
                 self.logger.warning(
@@ -107,6 +109,22 @@ class BinSinaScraper(BaseScraper):
             image_url=str(hit.get("image_url", "")),
         )
 
+    def _fetch_page(
+        self,
+        url: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> curl_requests.Response | None:
+        """Fetch a single Algolia page, retrying once with a fresh key."""
+        resp = self._fetch_post(url, headers, payload)
+        if resp:
+            return resp
+        # Key may have expired mid-pagination — refresh and retry
+        if self.refresh_api_key():
+            headers["X-Algolia-API-Key"] = self.api_key
+            return self._fetch_post(url, headers, payload)
+        return None
+
     def search(self, query: str) -> list[Product]:
         """Search BinSina for products matching the query."""
         try:
@@ -139,7 +157,7 @@ class BinSinaScraper(BaseScraper):
                     "hitsPerPage": 40,
                 }
 
-                resp = self._fetch_post(url, headers, payload)
+                resp = self._fetch_page(url, headers, payload)
                 if not resp:
                     self.logger.warning(
                         "[binsina] Failed page %d", page

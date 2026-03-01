@@ -101,7 +101,7 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
             ),
         ]
 
-        with patch("src.ui.app._load_scraper_class") as mock_load:
+        with patch("src.services.search_orchestrator._load_scraper_class") as mock_load:
             mock_scraper_instance = MagicMock()
             mock_scraper_instance.search.return_value = fake_products
             mock_cls: Any = MagicMock(
@@ -145,7 +145,7 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
             return s
 
         with patch(
-            "src.ui.app._load_scraper_class"
+            "src.services.search_orchestrator._load_scraper_class"
         ) as mock_load:
             mock_load.return_value = make_scraper
 

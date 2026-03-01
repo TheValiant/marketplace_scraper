@@ -21,6 +21,7 @@ class Settings:
 
     # --- Resilience ---
     CIRCUIT_BREAKER_THRESHOLD: int = 3  # Consecutive failures to trip
+    CIRCUIT_BREAKER_COOLDOWN: float = 60.0  # Seconds before half-open retry
     MAX_DELAY_MULTIPLIER: int = 8       # Cap for adaptive backoff
     CAPTCHA_KEYWORDS: list[str] = [
         "captcha",
@@ -68,11 +69,13 @@ class Settings:
             "id": "noon",
             "label": "Noon",
             "scraper": "src.scrapers.noon_scraper.NoonScraper",
+            "timeout": "10",
         },
         {
             "id": "amazon",
             "label": "Amazon",
             "scraper": "src.scrapers.amazon_scraper.AmazonScraper",
+            "timeout": "20",
         },
         {
             "id": "binsina",
@@ -83,6 +86,7 @@ class Settings:
             "id": "life_pharmacy",
             "label": "Life Pharmacy",
             "scraper": "src.scrapers.life_pharmacy_scraper.LifePharmacyScraper",
+            "timeout": "10",
         },
         {
             "id": "aster",
@@ -93,5 +97,6 @@ class Settings:
             "id": "iherb",
             "label": "iHerb",
             "scraper": "src.scrapers.iherb_scraper.IherbScraper",
+            "timeout": "20",
         },
     ]

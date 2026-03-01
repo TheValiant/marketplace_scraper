@@ -100,7 +100,7 @@ class IherbScraper(BaseScraper):
                 resp: Any = self._cs_scraper.get(
                     url,
                     headers=headers,
-                    timeout=self.settings.REQUEST_TIMEOUT,
+                    timeout=self._request_timeout,
                 )
                 if resp.status_code == 200:
                     text: str = str(resp.text)

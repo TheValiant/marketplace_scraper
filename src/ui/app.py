@@ -2,11 +2,9 @@
 
 """Terminal UI for the ecom_search price comparison engine."""
 
-import asyncio
-import importlib
 import logging
 import webbrowser
-from typing import Any, cast
+from typing import cast
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -24,20 +22,11 @@ from textual.widgets import (
 )
 
 from src.config.settings import Settings
-from src.filters.product_filter import ProductFilter
-from src.filters.query_enhancer import QueryEnhancer
 from src.models.product import Product
+from src.services.search_orchestrator import SearchOrchestrator
 from src.storage.file_manager import FileManager
 
 logger = logging.getLogger("ecom_search.ui")
-
-
-def _load_scraper_class(dotted_path: str) -> type[Any]:
-    """Dynamically import a scraper class from its dotted module path."""
-    module_path, class_name = dotted_path.rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    cls: type[Any] = getattr(module, class_name)
-    return cls
 
 
 class EcomSearchApp(App[object]):
@@ -61,6 +50,7 @@ class EcomSearchApp(App[object]):
         self.current_query: str = ""
         self.file_manager = FileManager()
         self.settings = Settings()
+        self.orchestrator = SearchOrchestrator()
 
     def compose(self) -> ComposeResult:
         """Build the widget tree for the TUI."""
@@ -94,7 +84,10 @@ class EcomSearchApp(App[object]):
             # Search Bar
             Horizontal(
                 Input(
-                    placeholder="Search products...", id="search_input"
+                    placeholder=(
+                        "Search products (use ; for multiple queries)..."
+                    ),
+                    id="search_input",
                 ),
                 Button("Search", variant="primary", id="search_btn"),
                 id="search_bar",
@@ -197,59 +190,44 @@ class EcomSearchApp(App[object]):
         table.clear()
         status.update(f"🔍 Searching '{query}'...")
 
-        # Build task list from checked sources dynamically
-        async def run_scraper(
-            scraper_path: str,
-            platform_id: str,
-        ) -> list[Product]:
-            """Run a blocking scraper in a thread."""
-            enhanced_query = QueryEnhancer.enhance_query(
-                query, negative_keywords, platform_id
-            )
-            scraper_cls = _load_scraper_class(scraper_path)
-            result: list[Product] = await asyncio.to_thread(
-                scraper_cls().search, enhanced_query
-            )
-            return result
-
-        tasks = [
-            run_scraper(src["scraper"], src["id"])
-            for src in selected_sources
-        ]
-
-        # Execute selected tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for batch in results:
-            if isinstance(batch, list):
-                self.products.extend(batch)
-            elif isinstance(batch, Exception):
-                logger.error(
-                    "Scraper returned exception for query '%s': %s",
-                    query,
-                    batch,
-                    exc_info=batch,
-                )
-                self.notify(f"Error: {batch}", severity="error")
-
-        # --- Post-scrape filtering ---
-        total_before = len(self.products)
-        self.products, excluded = ProductFilter.filter_by_keywords(
-            self.products, negative_keywords
+        result = await self.orchestrator.multi_search(
+            query, selected_sources, negative_keywords
         )
 
+        for error_msg in result.errors:
+            self.notify(f"Error: {error_msg}", severity="error")
+
+        self.products = result.products
         self.populate_table()
 
         if not self.products:
             status.update("❌ No products found")
         else:
-            # Auto-save results to disk
             self._auto_save_results()
-            if excluded:
+            removed = (
+                result.excluded_count
+                + result.deduplicated_count
+                + result.invalid_count
+            )
+            if removed:
+                parts: list[str] = []
+                if result.excluded_count:
+                    parts.append(
+                        f"{result.excluded_count} filtered"
+                    )
+                if result.deduplicated_count:
+                    parts.append(
+                        f"{result.deduplicated_count} deduped"
+                    )
+                if result.invalid_count:
+                    parts.append(
+                        f"{result.invalid_count} invalid"
+                    )
+                detail = ", ".join(parts)
                 status.update(
                     f"✅ Showing {len(self.products)} of"
-                    f" {total_before} products"
-                    f" ({excluded} filtered out, saved)"
+                    f" {result.total_before_filter} products"
+                    f" ({detail}, saved)"
                 )
             else:
                 status.update(

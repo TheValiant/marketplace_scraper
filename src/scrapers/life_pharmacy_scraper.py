@@ -15,7 +15,9 @@ class LifePharmacyScraper(BaseScraper):
 
     Life Pharmacy is a Nuxt.js SPA with a backend API at
     prodapp.lifepharmacy.com.  The search endpoint returns all
-    matching products in a single response.
+    matching products in a single response — no pagination is
+    needed or supported by this API.  If the result count appears
+    truncated (exactly divisible by 100), a warning is logged.
     """
 
     SEARCH_API = (
@@ -86,7 +88,14 @@ class LifePharmacyScraper(BaseScraper):
                 else []
             )
 
-            return [self._parse_item(item) for item in items]
+            products = [self._parse_item(item) for item in items]
+            if len(products) > 0 and len(products) % 100 == 0:
+                self.logger.warning(
+                    "[life_pharmacy] Result count (%d) is a "
+                    "multiple of 100 — results may be truncated",
+                    len(products),
+                )
+            return products
         except Exception as exc:
             self.logger.error(
                 "[life_pharmacy] Search failed: %s",
