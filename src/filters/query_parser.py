@@ -18,6 +18,8 @@ import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from src.config.settings import Settings
+
 logger = logging.getLogger("ecom_search.query_parser")
 
 
@@ -378,6 +380,15 @@ class QueryPlanner:
         base_queries = [
             _conjunction_to_query(conj) for conj in dnf
         ]
+
+        cap = Settings.MAX_BASE_QUERIES
+        if len(base_queries) > cap:
+            msg = (
+                f"Query too complex: generates "
+                f"{len(base_queries)} sub-queries "
+                f"(max {cap})"
+            )
+            raise ValueError(msg)
 
         logger.info(
             "Parsed '%s' → %d base queries, "

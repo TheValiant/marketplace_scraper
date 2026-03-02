@@ -7,6 +7,7 @@ import re
 import time
 from typing import Any, cast
 
+from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
 
 from src.models.product import Product
@@ -41,7 +42,7 @@ class BinSinaScraper(BaseScraper):
         """Fetch a fresh Algolia API key from the BinSina homepage."""
         try:
             headers: dict[str, str] = {
-                **self.settings.DEFAULT_HEADERS,
+                **self._session_headers,
                 "Referer": "https://binsina.ae/",
             }
             resp = self.session.get(
@@ -56,25 +57,11 @@ class BinSinaScraper(BaseScraper):
                 )
                 return False
 
-            match = re.search(
-                r"window\.algoliaConfig\s*=\s*(\{.*?\});",
-                resp.text,
-                re.DOTALL,
-            )
-            if not match:
-                self.logger.error(
-                    "[binsina] Could not find algoliaConfig"
-                )
+            api_key = self._extract_algolia_key(resp.text)
+            if not api_key:
                 return False
 
-            config: dict[str, Any] = json.loads(match.group(1))
-            self.api_key = str(config.get("apiKey", ""))
-            if not self.api_key:
-                self.logger.error(
-                    "[binsina] Empty API key in algoliaConfig"
-                )
-                return False
-
+            self.api_key = api_key
             self.logger.info("[binsina] Refreshed Algolia API key")
             self._api_key_expires_at = (
                 time.time()
@@ -88,6 +75,83 @@ class BinSinaScraper(BaseScraper):
                 exc_info=True,
             )
             return False
+
+    def _extract_algolia_key(self, html: str) -> str:
+        """Extract the Algolia API key from homepage HTML.
+
+        Tries a fast regex first, then falls back to parsing
+        all <script> tags with BeautifulSoup for resilience
+        against minification changes.
+        """
+        # Fast path: regex on raw HTML
+        match = re.search(
+            r"algoliaConfig\s*=\s*(\{.*?\})\s*;",
+            html,
+            re.DOTALL,
+        )
+        if match:
+            key = self._parse_algolia_json(match.group(1))
+            if key:
+                return key
+
+        # Fallback: parse <script> tags individually
+        soup = BeautifulSoup(html, "lxml")
+        for script in soup.find_all("script"):
+            text = script.string or ""
+            if "algoliaConfig" not in text:
+                continue
+            # Find the JSON object after the assignment
+            idx = text.find("algoliaConfig")
+            brace_start = text.find("{", idx)
+            if brace_start == -1:
+                continue
+            key = self._parse_algolia_json(
+                self._extract_balanced_braces(
+                    text, brace_start,
+                )
+            )
+            if key:
+                return key
+
+        self.logger.error(
+            "[binsina] Could not find algoliaConfig"
+        )
+        return ""
+
+    @staticmethod
+    def _extract_balanced_braces(
+        text: str, start: int,
+    ) -> str:
+        """Extract a balanced-brace substring from *start*."""
+        depth = 0
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[start: i + 1]
+        return ""
+
+    def _parse_algolia_json(
+        self, raw_json: str,
+    ) -> str:
+        """Parse JSON and return the apiKey value, or empty string."""
+        if not raw_json:
+            return ""
+        try:
+            config: dict[str, Any] = json.loads(raw_json)
+            key = str(config.get("apiKey", ""))
+            if not key:
+                self.logger.error(
+                    "[binsina] Empty API key in algoliaConfig"
+                )
+            return key
+        except json.JSONDecodeError:
+            self.logger.debug(
+                "[binsina] JSON decode failed for algoliaConfig"
+            )
+            return ""
 
     @staticmethod
     def _parse_hit(hit: dict[str, Any]) -> Product:

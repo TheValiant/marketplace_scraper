@@ -61,7 +61,7 @@ class AsterScraper(BaseScraper):
             products: list[Product] = []
             encoded = urllib.parse.quote(query, safe="")
             headers: dict[str, str] = {
-                **self.settings.DEFAULT_HEADERS,
+                **self._session_headers,
                 "Accept": "application/json",
                 "Origin": "https://www.myaster.com",
                 "Referer": self.BASE_URL,

@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -89,6 +90,7 @@ class PriceHistoryDB:
         self._conn = sqlite3.connect(
             str(path), check_same_thread=False,
         )
+        self._lock = threading.Lock()
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
@@ -115,33 +117,38 @@ class PriceHistoryDB:
         now = scraped_at or datetime.now()
         ts = now.isoformat()
         count = 0
-        cur = self._conn.cursor()
 
-        for p in products:
-            if not p.url or p.price <= 0:
-                continue
-            url = normalize_url(p.url)
+        with self._lock:
+            cur = self._conn.cursor()
 
-            cur.execute(
-                "INSERT INTO products (url, title, source, first_seen) "
-                "VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(url) DO UPDATE SET title=excluded.title",
-                (url, p.title, p.source, ts),
-            )
-            product_id: int = cur.execute(
-                "SELECT id FROM products WHERE url = ?",
-                (url,),
-            ).fetchone()[0]
+            for p in products:
+                if not p.url or p.price <= 0:
+                    continue
+                url = normalize_url(p.url)
 
-            cur.execute(
-                "INSERT INTO price_snapshots "
-                "(product_id, price, currency, scraped_at) "
-                "VALUES (?, ?, ?, ?)",
-                (product_id, p.price, p.currency, ts),
-            )
-            count += 1
+                cur.execute(
+                    "INSERT INTO products "
+                    "(url, title, source, first_seen) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(url) DO UPDATE "
+                    "SET title=excluded.title",
+                    (url, p.title, p.source, ts),
+                )
+                product_id: int = cur.execute(
+                    "SELECT id FROM products WHERE url = ?",
+                    (url,),
+                ).fetchone()[0]
 
-        self._conn.commit()
+                cur.execute(
+                    "INSERT INTO price_snapshots "
+                    "(product_id, price, currency, scraped_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (product_id, p.price, p.currency, ts),
+                )
+                count += 1
+
+            self._conn.commit()
+
         if count:
             logger.info(
                 "Recorded %d price snapshots at %s", count, ts,
@@ -236,11 +243,13 @@ class PriceHistoryDB:
         if row is None:
             return False
         new_state = 0 if row[1] else 1
-        self._conn.execute(
-            "UPDATE products SET is_starred = ? WHERE id = ?",
-            (new_state, row[0]),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "UPDATE products SET is_starred = ? "
+                "WHERE id = ?",
+                (new_state, row[0]),
+            )
+            self._conn.commit()
         return bool(new_state)
 
     def is_starred(self, product_url: str) -> bool:

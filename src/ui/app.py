@@ -6,6 +6,7 @@ import asyncio
 import logging
 import webbrowser
 from collections.abc import Mapping, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 
 from rich.text import Text
@@ -186,7 +187,14 @@ class EcomSearchApp(App[object]):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Configure table columns on startup."""
+        """Configure table columns and thread pool on startup."""
+        # Expand the default thread pool so rate-limited scrapers
+        # (blocking in time.sleep) don't exhaust all workers.
+        loop = asyncio.get_running_loop()
+        pool_size = len(self.settings.AVAILABLE_SOURCES) * 2
+        loop.set_default_executor(
+            ThreadPoolExecutor(max_workers=pool_size)
+        )
         table = cast(
             DataTable[str | Text],
             self.query_one("#results_table", DataTable),

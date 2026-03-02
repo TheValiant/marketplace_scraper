@@ -60,7 +60,7 @@ class NoonScraper(BaseScraper):
         try:
             products: list[Product] = []
             headers: dict[str, str] = {
-                **self.settings.DEFAULT_HEADERS,
+                **self._session_headers,
                 "Referer": (
                     "https://www.noon.com/uae-en/"
                     f"search/?q={query}"

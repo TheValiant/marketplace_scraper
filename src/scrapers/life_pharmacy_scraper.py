@@ -66,7 +66,7 @@ class LifePharmacyScraper(BaseScraper):
             encoded = urllib.parse.quote(query, safe="")
             url = self.SEARCH_API.format(query=encoded)
             headers: dict[str, str] = {
-                **self.settings.DEFAULT_HEADERS,
+                **self._session_headers,
                 "Accept": "application/json",
                 "Referer": "https://www.lifepharmacy.com/",
             }

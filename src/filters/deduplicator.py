@@ -4,7 +4,11 @@
 
 import logging
 import re
+from collections import defaultdict
 
+from rapidfuzz import fuzz
+
+from src.config.settings import Settings
 from src.models.product import Product
 
 logger = logging.getLogger("ecom_search.filters")
@@ -102,6 +106,12 @@ class ProductDeduplicator:
             seen_titles[title_key] = idx
             kept.append(product)
 
+        # ── Pass 3: cross-source fuzzy title matching ────
+        kept, fuzzy_removed = (
+            ProductDeduplicator._fuzzy_cross_source(kept)
+        )
+        removed += fuzzy_removed
+
         if removed:
             logger.info(
                 "Deduplication removed %d duplicate products",
@@ -109,3 +119,100 @@ class ProductDeduplicator:
             )
 
         return kept, removed
+
+    # ── Fuzzy cross-source helpers ───────────────────────
+
+    @staticmethod
+    def _bucket_key(title: str) -> str:
+        """Return first 3 normalised words as a bucket key."""
+        words = ProductDeduplicator._normalise_title(
+            title
+        ).split()
+        return " ".join(words[:3])
+
+    @staticmethod
+    def _prices_close(a: float, b: float) -> bool:
+        """Return True if two prices are within the tolerance."""
+        if a <= 0 or b <= 0:
+            return False
+        tolerance = Settings.FUZZY_PRICE_TOLERANCE
+        return abs(a - b) / max(a, b) <= tolerance
+
+    @staticmethod
+    def _is_fuzzy_match(
+        pa: Product,
+        norm_a: str,
+        pb: Product,
+    ) -> bool:
+        """Return True if two cross-source products are fuzzy-equal."""
+        if pa.source == pb.source:
+            return False
+        norm_b = ProductDeduplicator._normalise_title(
+            pb.title
+        )
+        score = fuzz.token_set_ratio(norm_a, norm_b)
+        if score < Settings.FUZZY_MATCH_THRESHOLD:
+            return False
+        return ProductDeduplicator._prices_close(
+            pa.price, pb.price,
+        )
+
+    @staticmethod
+    def _merge_bucket(
+        indices: list[int],
+        products: list[Product],
+        merged_into: dict[int, int],
+    ) -> None:
+        """Compare all pairs in a bucket and record merges."""
+        for i, idx_a in enumerate(indices):
+            if idx_a in merged_into:
+                continue
+            pa = products[idx_a]
+            norm_a = ProductDeduplicator._normalise_title(
+                pa.title
+            )
+            for idx_b in indices[i + 1:]:
+                if idx_b in merged_into:
+                    continue
+                pb = products[idx_b]
+                if not ProductDeduplicator._is_fuzzy_match(
+                    pa, norm_a, pb,
+                ):
+                    continue
+                if pb.price > 0 and pb.price < pa.price:
+                    merged_into[idx_a] = idx_b
+                    break
+                merged_into[idx_b] = idx_a
+
+    @staticmethod
+    def _fuzzy_cross_source(
+        products: list[Product],
+    ) -> tuple[list[Product], int]:
+        """Merge cross-source duplicates using fuzzy title matching.
+
+        Groups products by a coarse bucket key (first 3 words),
+        then compares pairs from different sources using
+        rapidfuzz token_set_ratio.  Merges when the score
+        exceeds the threshold and prices are close enough.
+        """
+        buckets: dict[str, list[int]] = defaultdict(list)
+        for idx, p in enumerate(products):
+            key = ProductDeduplicator._bucket_key(p.title)
+            buckets[key].append(idx)
+
+        merged_into: dict[int, int] = {}
+
+        for indices in buckets.values():
+            if len(indices) >= 2:
+                ProductDeduplicator._merge_bucket(
+                    indices, products, merged_into,
+                )
+
+        if not merged_into:
+            return products, 0
+
+        kept = [
+            p for idx, p in enumerate(products)
+            if idx not in merged_into
+        ]
+        return kept, len(merged_into)

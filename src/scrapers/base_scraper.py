@@ -12,6 +12,7 @@ from typing import Any
 import cloudscraper  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
+from curl_cffi.requests import BrowserTypeLiteral
 
 from src.config.settings import Settings
 from src.models.product import Product
@@ -27,9 +28,16 @@ class BaseScraper(ABC):
         )
         self.settings = Settings()
         self.selectors: dict[str, str] = self._load_selectors()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
+
+        # Random browser fingerprint per scraper instance
+        browser, self._session_headers = (
+            Settings.random_impersonation()
         )
+        self._impersonate: BrowserTypeLiteral = browser
+        self.session = curl_requests.Session(
+            impersonate=self._impersonate
+        )
+
         self._current_delay: float = (
             self.settings.REQUEST_DELAY
         )
@@ -253,7 +261,7 @@ class BaseScraper(ABC):
         if self._check_circuit():
             return None
         headers: dict[str, str] = {
-            **self.settings.DEFAULT_HEADERS,
+            **self._session_headers,
             "Referer": self._get_homepage(),
         }
         self._wait()
@@ -292,12 +300,17 @@ class BaseScraper(ABC):
 
     @staticmethod
     def extract_price(text: str | None) -> float:
-        """Extract a numeric price from a string like 'AED 1,299.00'."""
+        """Extract a numeric price from a string like 'AED 1,299.00'.
+
+        Uses the *last* number found in the text to avoid
+        capturing discounts or pack quantities that precede
+        the actual price (e.g. 'Save 15% - AED 1,299.00').
+        """
         if not text:
             return 0.0
         cleaned = text.replace(",", "")
-        numbers = re.findall(r"[\d,]+\.?\d*", cleaned)
-        return float(numbers[0]) if numbers else 0.0
+        numbers = re.findall(r"\d+\.?\d*", cleaned)
+        return float(numbers[-1]) if numbers else 0.0
 
     @abstractmethod
     def _get_homepage(self) -> str:

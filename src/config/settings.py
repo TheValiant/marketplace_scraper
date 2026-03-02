@@ -2,7 +2,9 @@
 
 """Central configuration for the ecom_search engine."""
 
+import random
 from pathlib import Path
+from typing import Any
 
 from curl_cffi.requests import BrowserTypeLiteral
 from dotenv import load_dotenv
@@ -32,11 +34,73 @@ class Settings:
     API_KEY_CACHE_TTL: float = 600.0    # BinSina key cache (secs)
     QUERY_CACHE_TTL: float = 3600.0     # In-memory result cache (secs)
 
+    # --- Query parsing ---
+    MAX_BASE_QUERIES: int = 10           # DNF explosion cap
+
     # --- Filtering ---
     QUERY_ENHANCED_PLATFORMS: list[str] = ["amazon", "iherb"]
 
+    # --- Deduplication ---
+    FUZZY_MATCH_THRESHOLD: int = 85      # rapidfuzz token_set_ratio
+    FUZZY_PRICE_TOLERANCE: float = 0.05  # 5 % price proximity
+
     # --- Browser Impersonation ---
     IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome131"
+
+    # Pool of browser fingerprints to randomise per session
+    _IMPERSONATION_POOL: list[
+        dict[str, Any]
+    ] = [
+        {
+            "browser": "chrome124",
+            "sec-ch-ua": (
+                '"Chromium";v="124", '
+                '"Google Chrome";v="124", '
+                '"Not-A.Brand";v="99"'
+            ),
+        },
+        {
+            "browser": "chrome131",
+            "sec-ch-ua": (
+                '"Google Chrome";v="131", '
+                '"Chromium";v="131", '
+                '"Not_A Brand";v="24"'
+            ),
+        },
+        {
+            "browser": "edge122",
+            "sec-ch-ua": (
+                '"Microsoft Edge";v="122", '
+                '"Chromium";v="122", '
+                '"Not(A:Brand";v="24"'
+            ),
+        },
+        {
+            "browser": "safari17_0",
+            "sec-ch-ua": "",
+        },
+    ]
+
+    @classmethod
+    def random_impersonation(
+        cls,
+    ) -> tuple[BrowserTypeLiteral, dict[str, str]]:
+        """Pick a random browser identity and matching headers."""
+        entry = random.choice(  # noqa: S311
+            cls._IMPERSONATION_POOL
+        )
+        browser: BrowserTypeLiteral = entry["browser"]
+        headers = dict(cls.DEFAULT_HEADERS)
+        ua: str = entry["sec-ch-ua"]
+        if ua:
+            headers["sec-ch-ua"] = ua
+        else:
+            # Safari does not send sec-ch-ua headers
+            headers.pop("sec-ch-ua", None)
+            headers.pop("sec-ch-ua-mobile", None)
+            headers.pop("sec-ch-ua-platform", None)
+        return browser, headers
+
     DEFAULT_HEADERS: dict[str, str] = {
         "Accept": (
             "text/html,application/xhtml+xml,"

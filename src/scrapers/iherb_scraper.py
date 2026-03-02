@@ -65,7 +65,7 @@ class IherbScraper(BaseScraper):
     def _build_headers(self) -> dict[str, str]:
         """Build headers with AED locale cookie."""
         return {
-            **self.settings.DEFAULT_HEADERS,
+            **self._session_headers,
             "Referer": self._get_homepage(),
             "Cookie": self._LOCALE_COOKIE,
         }
@@ -91,7 +91,7 @@ class IherbScraper(BaseScraper):
     ) -> BeautifulSoup | None:
         """Fetch a full page via cloudscraper as fallback."""
         headers: dict[str, str] = {
-            **self.settings.DEFAULT_HEADERS,
+            **self._session_headers,
             "Referer": self._get_homepage(),
             "Cookie": self._LOCALE_COOKIE,
         }
