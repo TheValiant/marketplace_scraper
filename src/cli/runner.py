@@ -274,3 +274,56 @@ async def run_health_check() -> int:
 
     Console().print(table)
     return 1 if any_down else 0
+
+
+def run_chart(
+    query: str | None, watchlist: bool,
+) -> int:
+    """Generate a Plotly chart and open in browser."""
+    from src.storage.chart_exporter import (
+        export_comparison_chart,
+        export_watchlist_dashboard,
+    )
+    from src.storage.price_history_db import PriceHistoryDB
+
+    db = PriceHistoryDB()
+
+    if watchlist:
+        path = export_watchlist_dashboard(db)
+        db.close()
+        if path:
+            _err.print(
+                f"[green]✓ Watchlist chart: {path}[/green]"
+            )
+            return 0
+        _err.print("[yellow]No starred products[/yellow]")
+        return 1
+
+    if not query:
+        _err.print(
+            "[red]Provide a query with --chart QUERY"
+            " or use --watchlist[/red]"
+        )
+        db.close()
+        return 1
+
+    # Find products matching the query title
+    urls = db.search_products_by_title(query)
+
+    if not urls:
+        _err.print(
+            f"[yellow]No products found matching "
+            f"'{query}'[/yellow]"
+        )
+        db.close()
+        return 1
+
+    path = export_comparison_chart(urls, db)
+    db.close()
+    if path:
+        _err.print(
+            f"[green]✓ Comparison chart: {path}[/green]"
+        )
+        return 0
+    _err.print("[yellow]Not enough data for chart[/yellow]")
+    return 1

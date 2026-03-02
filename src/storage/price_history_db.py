@@ -252,6 +252,17 @@ class PriceHistoryDB:
         ).fetchone()
         return bool(row[0]) if row else False
 
+    def search_products_by_title(
+        self, query: str, limit: int = 20,
+    ) -> list[str]:
+        """Return product URLs whose title matches a query."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT url FROM products "
+            "WHERE title LIKE ? LIMIT ?",
+            (f"%{query}%", limit),
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
     def get_starred_products(
         self,
     ) -> list[dict[str, object]]:

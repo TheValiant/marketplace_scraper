@@ -52,6 +52,7 @@ class EcomSearchApp(App[object]):
         Binding("h", "show_history", "History"),
         Binding("t", "toggle_star", "Star"),
         Binding("w", "show_watchlist", "Watchlist"),
+        Binding("o", "open_chart", "Browser Chart"),
     ]
 
     def __init__(self) -> None:
@@ -626,4 +627,31 @@ class EcomSearchApp(App[object]):
                 str(item["avg_price"]),
                 str(item["source"]).upper(),
                 str(item["snapshot_count"]),
+            )
+
+    async def action_open_chart(self) -> None:
+        """Open an interactive Plotly chart in the browser."""
+        from src.storage.chart_exporter import (
+            export_price_chart,
+        )
+
+        product = self._get_selected_product()
+        if product is None:
+            self.notify(
+                "Select a product first",
+                severity="warning",
+            )
+            return
+
+        path = await asyncio.to_thread(
+            export_price_chart,
+            product.url,
+            self.price_db,
+        )
+        if path:
+            self.notify("Chart opened in browser")
+        else:
+            self.notify(
+                "Not enough data for chart",
+                severity="warning",
             )

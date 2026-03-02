@@ -68,6 +68,23 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Run a connectivity health check on all sources.",
     )
+    parser.add_argument(
+        "--chart",
+        nargs="?",
+        const="",
+        default=None,
+        dest="chart_query",
+        help=(
+            "Generate a price comparison chart."
+            " Optionally provide a title query."
+        ),
+    )
+    parser.add_argument(
+        "--watchlist",
+        action="store_true",
+        default=False,
+        help="Generate a chart for all starred products.",
+    )
     return parser
 
 
@@ -117,6 +134,14 @@ def _run_health_check() -> None:
     sys.exit(exit_code)
 
 
+def _run_chart(query: str | None, watchlist: bool) -> None:
+    """Generate and open a Plotly price chart."""
+    from src.cli.runner import run_chart
+
+    exit_code = run_chart(query or None, watchlist)
+    sys.exit(exit_code)
+
+
 def main() -> None:
     """Route to TUI (no args) or headless CLI (query provided)."""
     log_file = setup_logging()
@@ -129,6 +154,8 @@ def main() -> None:
         _run_import_history()
     elif args.health:
         _run_health_check()
+    elif args.chart_query is not None or args.watchlist:
+        _run_chart(args.chart_query, args.watchlist)
     elif args.query is None:
         _run_tui()
     else:
