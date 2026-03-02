@@ -20,6 +20,9 @@ logs/
 # Scraped results (auto-generated, potentially large)
 results/
 
+# SQLite price history database
+data/
+
 # IDE / Editor
 .vscode/
 .idea/

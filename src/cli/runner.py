@@ -195,3 +195,82 @@ async def cli_search(
         sys.stdout.write("\n")
 
     return 0
+
+
+def run_import_history() -> int:
+    """Import legacy JSON result files into the price history DB."""
+    from rich.progress import Progress
+
+    from src.storage.price_history_db import PriceHistoryDB
+
+    _err.print("[bold]Importing legacy results into price history DB...[/bold]")
+
+    db = PriceHistoryDB()
+    results_dir = Settings.RESULTS_DIR
+
+    if not results_dir.exists():
+        _err.print("[red]Results directory not found.[/red]")
+        db.close()
+        return 1
+
+    files = sorted(results_dir.glob("*.json"))
+    if not files:
+        _err.print("[yellow]No JSON files found in results/.[/yellow]")
+        db.close()
+        return 0
+
+    total_snapshots = 0
+    with Progress(console=_err) as progress:
+        task = progress.add_task("Importing...", total=len(files))
+        for filepath in files:
+            count = db.import_single_file(filepath)
+            total_snapshots += count
+            progress.advance(task)
+
+    db.close()
+    _err.print(
+        f"[green]✓ Imported {total_snapshots:,} snapshots"
+        f" from {len(files)} files[/green]"
+    )
+    return 0
+
+
+async def run_health_check() -> int:
+    """Run connectivity health check on all sources."""
+    from src.services.health_checker import HealthChecker
+
+    _err.print("[bold]Running scraper health check...[/bold]")
+    checker = HealthChecker()
+    results = await checker.check_all()
+
+    table = Table(
+        title="Source Health Check",
+        show_lines=True,
+        title_style="bold cyan",
+    )
+    table.add_column("Source", style="bold")
+    table.add_column("Status", justify="center")
+    table.add_column("Latency", justify="right")
+    table.add_column("Notes", style="dim")
+
+    any_down = False
+    for r in results:
+        if r.status == "ok":
+            status = "[green]✅ OK[/green]"
+        elif r.status == "slow":
+            status = "[yellow]⚠️  SLOW[/yellow]"
+        else:
+            status = "[red]❌ DOWN[/red]"
+            any_down = True
+
+        latency = (
+            f"{r.latency_ms:.0f}ms"
+            if r.latency_ms > 0
+            else "—"
+        )
+        table.add_row(
+            r.source_id, status, latency, r.message,
+        )
+
+    Console().print(table)
+    return 1 if any_down else 0

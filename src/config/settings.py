@@ -63,6 +63,11 @@ class Settings:
     SELECTORS_PATH: Path = BASE_DIR / "src" / "config" / "selectors.json"
     RESULTS_DIR: Path = BASE_DIR / "results"
     LOGS_DIR: Path = BASE_DIR / "logs"
+    DATA_DIR: Path = BASE_DIR / "data"
+    PRICE_DB_PATH: Path = DATA_DIR / "price_history.db"
+
+    # --- Price Tracking ---
+    PRICE_HISTORY_RETENTION_DAYS: int = 365
 
     # --- Sources (registry for future extensibility) ---
     AVAILABLE_SOURCES: list[dict[str, str]] = [

@@ -55,6 +55,19 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="output_dir",
         help="Custom output directory (default: results/).",
     )
+    parser.add_argument(
+        "--import-history",
+        action="store_true",
+        default=False,
+        dest="import_history",
+        help="Import existing JSON results into price history DB.",
+    )
+    parser.add_argument(
+        "--health",
+        action="store_true",
+        default=False,
+        help="Run a connectivity health check on all sources.",
+    )
     return parser
 
 
@@ -88,6 +101,22 @@ def _run_cli(args: argparse.Namespace) -> None:
     sys.exit(exit_code)
 
 
+def _run_import_history() -> None:
+    """Import legacy JSON results into the price history database."""
+    from src.cli.runner import run_import_history
+
+    exit_code = run_import_history()
+    sys.exit(exit_code)
+
+
+def _run_health_check() -> None:
+    """Run scraper connectivity health check."""
+    from src.cli.runner import run_health_check
+
+    exit_code = asyncio.run(run_health_check())
+    sys.exit(exit_code)
+
+
 def main() -> None:
     """Route to TUI (no args) or headless CLI (query provided)."""
     log_file = setup_logging()
@@ -96,7 +125,11 @@ def main() -> None:
     parser = _build_parser()
     args = parser.parse_args()
 
-    if args.query is None:
+    if args.import_history:
+        _run_import_history()
+    elif args.health:
+        _run_health_check()
+    elif args.query is None:
         _run_tui()
     else:
         _run_cli(args)

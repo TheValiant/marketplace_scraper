@@ -19,6 +19,7 @@ from src.filters.query_parser import (
     local_evaluate,
 )
 from src.models.product import Product
+from src.storage.price_history_db import PriceHistoryDB
 from src.storage.query_cache import QueryCache
 
 logger = logging.getLogger("ecom_search.orchestrator")
@@ -56,6 +57,7 @@ class SearchOrchestrator:
     def __init__(self) -> None:
         self.settings = Settings()
         self.query_cache = QueryCache()
+        self._price_db = PriceHistoryDB()
 
     # ── Private helpers ──────────────────────────────────
 
@@ -159,6 +161,12 @@ class SearchOrchestrator:
                 query, neg_set, source_ids, all_products
             )
 
+            # Record price snapshots (async-safe, non-blocking)
+            await asyncio.to_thread(
+                self._price_db.record_snapshots,
+                all_products,
+            )
+
         # Re-validate cached data (already valid for fresh)
         if cached is not None:
             all_products, result.invalid_count = (
@@ -225,6 +233,12 @@ class SearchOrchestrator:
 
                 self.query_cache.store(
                     bq, neg_set, source_ids, scraped
+                )
+
+                # Record price snapshots
+                await asyncio.to_thread(
+                    self._price_db.record_snapshots,
+                    scraped,
                 )
                 all_raw.extend(scraped)
 
