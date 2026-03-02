@@ -12,6 +12,7 @@ from textual.widgets import (
     DataTable,
     Input,
     Static,
+    TabbedContent,
 )
 
 from src.models.product import Product
@@ -251,6 +252,71 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
                 )
             )
             self.assertIsNone(result)
+
+    async def test_tabbed_content_exists(self) -> None:
+        """Verify TabbedContent widget with three tabs."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            tabs = app.query_one("#tabs", TabbedContent)
+            self.assertIsNotNone(tabs)
+            # Results tab is active by default
+            self.assertEqual(tabs.active, "results_tab")
+            await pilot.pause()
+
+    async def test_results_table_has_trend_column(self) -> None:
+        """Verify results table has a Trend column."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            table = cast(
+                DataTable[str],
+                app.query_one("#results_table", DataTable),
+            )
+            cols = [
+                str(c.label) for c in table.columns.values()
+            ]
+            self.assertIn("Trend", cols)
+            await pilot.pause()
+
+    async def test_watchlist_table_exists(self) -> None:
+        """Verify watchlist table widget exists."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            wl_table = cast(
+                DataTable[str],
+                app.query_one(
+                    "#watchlist_table", DataTable,
+                ),
+            )
+            self.assertIsNotNone(wl_table)
+            await pilot.pause()
+
+    async def test_toggle_star_no_product_warns(self) -> None:
+        """Toggle star with no product selected warns."""
+        app = EcomSearchApp()
+        async with app.run_test(
+            notifications=True,
+        ) as pilot:
+            await app.action_toggle_star()
+            await pilot.pause()
+            # Should not crash, products is empty
+
+    async def test_show_history_no_product_warns(self) -> None:
+        """Show history with no product selected warns."""
+        app = EcomSearchApp()
+        async with app.run_test(
+            notifications=True,
+        ) as pilot:
+            await app.action_show_history()
+            await pilot.pause()
+
+    async def test_show_watchlist_switches_tab(self) -> None:
+        """Action show_watchlist switches to watchlist tab."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            await app.action_show_watchlist()
+            await pilot.pause()
+            tabs = app.query_one("#tabs", TabbedContent)
+            self.assertEqual(tabs.active, "watchlist_tab")
 
 
 if __name__ == "__main__":

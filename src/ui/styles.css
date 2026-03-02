@@ -64,3 +64,45 @@ Checkbox {
 DataTable > .datatable--cursor {
     background: $secondary 30%;
 }
+
+/* --- Tabbed Content --- */
+#tabs {
+    height: 1fr;
+}
+
+/* --- Price History Tab --- */
+#history_container {
+    height: 1fr;
+}
+
+#history_label {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+#history_stats {
+    height: 1;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+#history_chart {
+    height: 1fr;
+}
+
+/* --- Watchlist Tab --- */
+#watchlist_container {
+    height: 1fr;
+}
+
+#watchlist_label {
+    height: 1;
+    padding: 0 1;
+    text-style: bold;
+}
+
+#watchlist_table {
+    height: 1fr;
+    border: solid $primary;
+}
