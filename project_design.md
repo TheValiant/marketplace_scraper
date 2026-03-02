@@ -1,99 +1,103 @@
 # `ecom_search` — Project Design Document
 
-> **Version**: 1.0  
-> **Last Updated**: 2026-02-14  
+> **Version**: 2.0
+> **Last Updated**: 2026-03-01
 > **Core Philosophy**: *"Resilience over Speed."*
 
 ---
 
 ## Table of Contents
 
-1. [Overview](#1-overview)  
-2. [Architecture](#2-architecture)  
-3. [Directory Structure](#3-directory-structure)  
-4. [Configuration Layer](#4-configuration-layer)  
-5. [Data Models](#5-data-models)  
-6. [Scraping Engine](#6-scraping-engine)  
-7. [TUI Application](#7-tui-application)  
-   - 7.1 [Layout & Composition](#71-layout--composition)  
-   - 7.2 [Source Selection Checkboxes](#72-source-selection-checkboxes)  
-   - 7.3 [Search Flow](#73-search-flow)  
-   - 7.4 [Results Table](#74-results-table)  
-   - 7.5 [Key Bindings & Actions](#75-key-bindings--actions)  
-8. [Styling (CSS)](#8-styling-css)  
-9. [Storage & Export](#9-storage--export)  
-10. [Anti-Detection Strategy](#10-anti-detection-strategy)  
-11. [Testing Strategy](#11-testing-strategy)  
-12. [Implementation Checklist](#12-implementation-checklist)  
+1. [Overview](#1-overview)
+2. [Architecture](#2-architecture)
+3. [Directory Structure](#3-directory-structure)
+4. [Configuration Layer](#4-configuration-layer)
+5. [Data Models](#5-data-models)
+6. [Scraping Engine](#6-scraping-engine)
+7. [Search Orchestration & Filtering Pipeline](#7-search-orchestration--filtering-pipeline)
+8. [Price History & Tracking](#8-price-history--tracking)
+9. [TUI Application](#9-tui-application)
+10. [CLI Mode](#10-cli-mode)
+11. [Charts & Visualization](#11-charts--visualization)
+12. [Storage & Export](#12-storage--export)
+13. [Anti-Detection Strategy](#13-anti-detection-strategy)
+14. [Testing Strategy](#14-testing-strategy)
 
 ---
 
 ## 1. Overview
 
-`ecom_search` is a **modular, local e-commerce price comparison engine** for UAE markets. It scrapes product listings from **Noon** and **Amazon.ae**, presents them in a rich Terminal User Interface (TUI), and lets users sort, compare, save, and open results — all from the terminal.
+`ecom_search` is a **modular, local e-commerce price comparison engine** for UAE markets. It scrapes product listings from **6 sources** (Noon, Amazon.ae, BinSina, Life Pharmacy, Aster, iHerb), presents them in a rich Terminal User Interface (TUI), tracks price history in SQLite, and generates interactive charts — all from the terminal.
 
 ### Key Capabilities
 
 | Feature | Description |
 |---|---|
-| **Multi-source search** | Scrapes Noon and Amazon concurrently |
+| **Multi-source search** | Scrapes 6 UAE marketplaces concurrently |
 | **Source selection** | Checkboxes to toggle individual sources on/off |
-| **Price comparison** | Highlights the lowest price across all results |
+| **Boolean query syntax** | Supports `OR`, `AND`, parentheses, `-exclusion` |
+| **Multi-query** | Semicolon-separated queries executed in parallel |
+| **Price tracking** | SQLite database auto-records every search result |
+| **Star/watchlist** | Pin products for focused tracking |
+| **In-TUI charts** | ASCII price history charts via textual-plotext |
+| **Browser charts** | Interactive Plotly HTML charts opened in browser |
 | **Sorting** | Sort by price or rating with a single keypress |
-| **Export** | Save results to JSON/CSV via `FileManager` |
+| **Export** | Save results to JSON/CSV, copy to clipboard |
+| **Query cache** | Avoids duplicate requests within a session |
+| **Health check** | Verifies scraper connectivity across all sources |
+| **Loading indicator** | Visual feedback during multi-source searches |
 | **Anti-detection** | Browser-impersonating HTTP via `curl_cffi` |
+| **Legacy import** | One-time migration of existing JSON result files |
 
 ---
 
 ## 2. Architecture
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                        main.py (Entry Point)                       │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│                     src/ui/app.py  (EcomSearchApp)                  │
-│                                                                    │
-│  ┌──────────┐  ┌──────────────────┐  ┌───────────────────────┐    │
-│  │  Header   │  │   Search Bar     │  │   Results DataTable    │   │
-│  └──────────┘  │  Input + Button   │  │   (sortable, clickable)│   │
-│                │                    │  └───────────────────────┘    │
-│                └──────────────────┘                                 │
-│                ┌──────────────────┐                                 │
-│                │ Source Toggles    │                                 │
-│                │ [x] Noon          │                                 │
-│                │ [x] Amazon        │                                 │
-│                └──────────────────┘                                 │
-│                ┌──────────────────┐                                 │
-│                │   Status Bar     │                                 │
-│                └──────────────────┘                                 │
-└───────────┬────────────────────────────────────┬───────────────────┘
-            │                                    │
-            ▼                                    ▼
-┌───────────────────────┐           ┌───────────────────────┐
-│  src/scrapers/         │           │  src/storage/          │
-│  ├─ base_scraper.py    │           │  └─ file_manager.py    │
-│  ├─ noon_scraper.py    │           └───────────────────────┘
-│  └─ amazon_scraper.py  │
-└───────────┬────────────┘
-            │
-            ▼
-┌───────────────────────┐
-│  src/config/           │
-│  ├─ settings.py        │
-│  └─ selectors.json     │
-└───────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        main.py (Entry Point)                         │
+│         Routes: TUI (default) │ CLI (query) │ Utilities              │
+└──────────┬──────────┬─────────┬──────────┬──────────┬────────────────┘
+           │          │         │          │          │
+     No args     query arg   --health  --chart   --import-history
+           │          │         │          │          │
+           ▼          ▼         ▼          ▼          ▼
+      ┌────────┐ ┌────────┐ ┌──────┐ ┌────────┐ ┌────────┐
+      │  TUI   │ │  CLI   │ │Health│ │ Chart  │ │ Import │
+      │app.py  │ │runner  │ │Check │ │Exporter│ │Legacy  │
+      └───┬────┘ └───┬────┘ └──────┘ └────────┘ └────────┘
+          │          │
+          ▼          ▼
+    ┌─────────────────────────┐
+    │   SearchOrchestrator    │     Concurrent scraping + filtering
+    │   (multi_search)        │
+    └──────────┬──────────────┘
+               │
+    ┌──────────▼──────────────┐
+    │   Filtering Pipeline     │
+    │  QueryParser → Enhancer  │
+    │  → Validator → Filter    │
+    │  → Deduplicator          │
+    └──────────┬──────────────┘
+               │
+    ┌──────────▼──────────────┐     ┌──────────────────────┐
+    │   6 Scrapers             │     │  Storage Layer        │
+    │   noon, amazon, binsina  │     │  ├ PriceHistoryDB     │
+    │   life_pharmacy, aster   │     │  ├ FileManager        │
+    │   iherb                  │     │  ├ ChartExporter      │
+    └──────────────────────────┘     │  └ QueryCache         │
+                                     └──────────────────────┘
 ```
 
 ### Data Flow
 
 1. User types a query and presses **Search** (or `Enter`).
-2. `EcomSearchApp.perform_search()` reads the **source selection checkboxes**.
-3. Only the **checked** scrapers are dispatched via `asyncio.gather()`.
-4. Each scraper returns a `list[Product]`.
-5. Results are merged, the cheapest is highlighted, and the `DataTable` is populated.
+2. `LoadingIndicator` appears while search runs.
+3. `SearchOrchestrator.multi_search()` dispatches scrapers concurrently via `asyncio.gather()`.
+4. Results pass through the filtering pipeline: validation → enhancement → keyword filtering → deduplication.
+5. Valid products are auto-recorded in the SQLite price history database.
+6. Results populate the `DataTable` with trend indicators (↑↓→).
+7. `LoadingIndicator` hides, status bar shows result summary.
 
 ---
 
@@ -101,43 +105,87 @@
 
 ```
 marketplace_scraper/
-├── main.py                        # Entry point: runs EcomSearchApp
-├── .env                           # Secrets (API keys, proxies)
-├── .antigravity/
-│   └── rules.md                   # Agent rules & project conventions
+├── main.py                        # Entry point: TUI, CLI, utilities
+├── pylance.sh                     # Linter gate (flake8 + pyright strict)
+├── requirements.txt               # Pin-locked dependencies
 ├── project_design.md              # This document
+├── .env                           # Secrets (not committed)
+├── .gitignore
 │
 ├── src/
 │   ├── __init__.py
 │   │
 │   ├── config/
-│   │   ├── __init__.py
-│   │   ├── settings.py            # All constants (delays, retries, timeouts)
-│   │   └── selectors.json         # CSS selectors for each marketplace
+│   │   ├── settings.py            # All constants (delays, retries, paths, sources)
+│   │   ├── selectors.json         # CSS selectors for each marketplace
+│   │   └── logging_config.py      # Structured logging setup
 │   │
 │   ├── models/
-│   │   ├── __init__.py
-│   │   └── product.py             # Product dataclass
+│   │   ├── product.py             # Product dataclass
+│   │   └── price_snapshot.py      # PriceSnapshot dataclass (temporal)
 │   │
 │   ├── scrapers/
-│   │   ├── __init__.py
 │   │   ├── base_scraper.py        # Abstract base: session, extract_price, headers
-│   │   ├── noon_scraper.py        # Noon-specific scraper
-│   │   └── amazon_scraper.py      # Amazon-specific scraper
+│   │   ├── noon_scraper.py        # Noon.com scraper
+│   │   ├── amazon_scraper.py      # Amazon.ae scraper
+│   │   ├── binsina_scraper.py     # BinSina Pharmacy scraper
+│   │   ├── life_pharmacy_scraper.py  # Life Pharmacy scraper
+│   │   ├── aster_scraper.py       # Aster Pharmacy scraper
+│   │   └── iherb_scraper.py       # iHerb scraper
+│   │
+│   ├── filters/
+│   │   ├── query_parser.py        # Boolean query parsing (AND/OR/NOT)
+│   │   ├── query_enhancer.py      # Query expansion & synonym handling
+│   │   ├── product_validator.py   # Validates scraped Product fields
+│   │   ├── product_filter.py      # Negative keyword filtering
+│   │   └── deduplicator.py        # URL-based deduplication
+│   │
+│   ├── services/
+│   │   ├── search_orchestrator.py # Concurrent search + pipeline orchestration
+│   │   └── health_checker.py      # Source connectivity probe
 │   │
 │   ├── storage/
-│   │   ├── __init__.py
-│   │   └── file_manager.py        # JSON/CSV export
+│   │   ├── file_manager.py        # JSON/CSV export
+│   │   ├── price_history_db.py    # SQLite price history CRUD
+│   │   ├── chart_exporter.py      # Plotly HTML chart generation
+│   │   └── query_cache.py         # In-memory query deduplication cache
+│   │
+│   ├── cli/
+│   │   └── runner.py              # Headless CLI search + utility commands
 │   │
 │   └── ui/
-│       ├── __init__.py
-│       ├── app.py                 # EcomSearchApp (Textual App)
+│       ├── app.py                 # EcomSearchApp (Textual TUI)
 │       └── styles.css             # Textual CSS styles
 │
+├── data/                          # (gitignored) Runtime data
+│   ├── price_history.db           # SQLite database
+│   └── charts/                    # Generated HTML charts
+│
+├── results/                       # Saved search results (JSON)
+├── logs/                          # Application logs
+│
 └── tests/
-    ├── __init__.py
+    ├── conftest.py                # Shared fixtures, sleep patch
     ├── test_noon_scraper.py
-    └── test_amazon_scraper.py
+    ├── test_amazon_scraper.py
+    ├── test_binsina_scraper.py
+    ├── test_life_pharmacy_scraper.py
+    ├── test_aster_scraper.py
+    ├── test_iherb_scraper.py
+    ├── test_base_scraper.py
+    ├── test_search_orchestrator.py
+    ├── test_product_filter.py
+    ├── test_product_validator.py
+    ├── test_query_parser.py
+    ├── test_deduplicator.py
+    ├── test_file_manager.py
+    ├── test_query_cache.py
+    ├── test_settings.py
+    ├── test_app.py
+    ├── test_cli.py
+    ├── test_price_history_db.py
+    ├── test_health_checker.py
+    └── test_chart_exporter.py
 ```
 
 ---
@@ -148,868 +196,273 @@ marketplace_scraper/
 
 All tuneable constants live here. **No magic numbers** in scraper or UI code.
 
-```python
-# src/config/settings.py
-
-from pathlib import Path
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-class Settings:
-    """Central configuration for the ecom_search engine."""
-
-    # --- Scraping ---
-    REQUEST_DELAY: float = 2.0          # Seconds between requests
-    REQUEST_TIMEOUT: int = 15           # Seconds before a request times out
-    MAX_RETRIES: int = 3                # Retry count on transient failures
-    MAX_PAGES: int = 3                  # Max pagination depth per source
-
-    # --- Browser Impersonation ---
-    IMPERSONATE_BROWSER: str = "chrome124"
-    DEFAULT_HEADERS: dict = {
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-
-    # --- Paths ---
-    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
-    SELECTORS_PATH: Path = BASE_DIR / "src" / "config" / "selectors.json"
-    RESULTS_DIR: Path = BASE_DIR / "results"
-
-    # --- Sources (registry for future extensibility) ---
-    AVAILABLE_SOURCES: list[dict] = [
-        {"id": "noon",   "label": "Noon",   "scraper": "src.scrapers.noon_scraper.NoonScraper"},
-        {"id": "amazon", "label": "Amazon", "scraper": "src.scrapers.amazon_scraper.AmazonScraper"},
-    ]
-```
+Key settings include:
+- `REQUEST_DELAY`, `REQUEST_TIMEOUT`, `MAX_RETRIES`, `MAX_PAGES`
+- `IMPERSONATE_BROWSER = "chrome124"`
+- `BASE_DIR`, `SELECTORS_PATH`, `RESULTS_DIR`, `DATA_DIR`, `PRICE_DB_PATH`
+- `AVAILABLE_SOURCES` — Registry of all 6 scrapers with dotted import paths and optional timeouts
 
 ### `src/config/selectors.json`
 
-CSS selectors are **never hardcoded** in Python. If a site changes its layout, only this file is updated.
-
-```json
-{
-  "noon": {
-    "product_card": "div[data-qa='product-block']",
-    "title": "span[data-qa='product-name']",
-    "price": "strong[data-qa='product-price']",
-    "currency": "span.currency",
-    "rating": "div[data-qa='product-rating']",
-    "url": "a[data-qa='product-link']",
-    "next_page": "a[rel='next']"
-  },
-  "amazon": {
-    "product_card": "div[data-component-type='s-search-result']",
-    "title": "h2 a span",
-    "price": "span.a-price > span.a-offscreen",
-    "currency": "",
-    "rating": "span.a-icon-alt",
-    "url": "h2 a.a-link-normal",
-    "next_page": "a.s-pagination-next"
-  }
-}
-```
+CSS selectors are **never hardcoded** in Python. If a site changes its layout, only this file is updated. Contains selectors for: `product_card`, `title`, `price`, `currency`, `rating`, `url`, `next_page` per source.
 
 ---
 
 ## 5. Data Models
 
-### `src/models/product.py`
+### `Product` (`src/models/product.py`)
 
-All inter-module data flows through this dataclass. **No raw dicts**.
+Core data transfer object for scraped results:
 
-```python
-# src/models/product.py
+| Field | Type | Description |
+|---|---|---|
+| `title` | `str` | Product name |
+| `price` | `float` | Extracted numeric price |
+| `currency` | `str` | Currency code (AED, USD) |
+| `rating` | `str` | Star rating or review text |
+| `url` | `str` | Product page URL |
+| `source` | `str` | Source identifier (noon, amazon, etc.) |
 
-from dataclasses import dataclass, field
+### `PriceSnapshot` (`src/models/price_snapshot.py`)
 
-@dataclass
-class Product:
-    """Represents a single product listing from any marketplace."""
+Temporal price observation for history tracking:
 
-    title: str
-    price: float
-    currency: str = "AED"
-    rating: str = ""
-    url: str = ""
-    source: str = ""
-    image_url: str = ""
-```
+| Field | Type | Description |
+|---|---|---|
+| `product_url` | `str` | Normalized canonical URL |
+| `title` | `str` | Product name at scrape time |
+| `price` | `float` | Price at scrape time |
+| `currency` | `str` | Currency code |
+| `source` | `str` | Source identifier |
+| `scraped_at` | `datetime` | Timestamp of observation |
 
 ---
 
 ## 6. Scraping Engine
 
-### `src/scrapers/base_scraper.py`
+### Base Scraper (`src/scrapers/base_scraper.py`)
 
-```python
-# src/scrapers/base_scraper.py
+All scrapers inherit from `BaseScraper` which provides:
+- `curl_cffi` session with `impersonate="chrome124"` and anti-detection headers
+- `extract_price()` static method for consistent price parsing
+- `Referer` header set to target site's homepage
+- Rate limiting via `Settings.REQUEST_DELAY`
 
-import json
-import logging
-import re
-import time
-from abc import ABC, abstractmethod
+### Active Scrapers
 
-import cloudscraper
-from bs4 import BeautifulSoup
-from curl_cffi import requests as curl_requests
+| Source | Module | Strategy |
+|---|---|---|
+| **Noon** | `noon_scraper.py` | HTML scraping via CSS selectors |
+| **Amazon.ae** | `amazon_scraper.py` | HTML scraping with pagination |
+| **BinSina** | `binsina_scraper.py` | Pharmacy product scraping |
+| **Life Pharmacy** | `life_pharmacy_scraper.py` | Pharmacy product scraping |
+| **Aster** | `aster_scraper.py` | Pharmacy product scraping |
+| **iHerb** | `iherb_scraper.py` | Supplement marketplace scraping |
 
-from src.config.settings import Settings
-
-class BaseScraper(ABC):
-    """Abstract base class for all marketplace scrapers."""
-
-    def __init__(self, source_name: str):
-        self.source_name = source_name
-        self.logger = logging.getLogger(f"ecom_search.{source_name}")
-        self.settings = Settings()
-        self.selectors = self._load_selectors()
-        self.session = curl_requests.Session(
-            impersonate=self.settings.IMPERSONATE_BROWSER
-        )
-
-    def _load_selectors(self) -> dict:
-        """Load CSS selectors for this source from selectors.json."""
-        with open(self.settings.SELECTORS_PATH) as f:
-            all_selectors = json.load(f)
-        return all_selectors.get(self.source_name, {})
-
-    def _get_page(self, url: str) -> BeautifulSoup | None:
-        """Fetch a page with curl_cffi, falling back to cloudscraper on failure."""
-        headers = {
-            **self.settings.DEFAULT_HEADERS,
-            "Referer": self._get_homepage(),
-        }
-        time.sleep(self.settings.REQUEST_DELAY)
-
-        # Primary: curl_cffi (browser-impersonating TLS)
-        for attempt in range(self.settings.MAX_RETRIES):
-            try:
-                resp = self.session.get(
-                    url, headers=headers, timeout=self.settings.REQUEST_TIMEOUT
-                )
-                if resp.status_code == 200:
-                    return BeautifulSoup(resp.text, "lxml")
-                self.logger.warning(
-                    "[%s] HTTP %d on attempt %d", self.source_name, resp.status_code, attempt + 1
-                )
-            except Exception as e:
-                self.logger.warning(
-                    "[%s] curl_cffi error on attempt %d: %s", self.source_name, attempt + 1, e
-                )
-                time.sleep(self.settings.REQUEST_DELAY * (attempt + 1))
-
-        # Fallback: cloudscraper (JS challenge solver)
-        self.logger.info("[%s] curl_cffi exhausted, falling back to cloudscraper", self.source_name)
-        try:
-            scraper = cloudscraper.create_scraper()
-            resp = scraper.get(url, headers=headers, timeout=self.settings.REQUEST_TIMEOUT)
-            if resp.status_code == 200:
-                return BeautifulSoup(resp.text, "lxml")
-        except Exception as e:
-            self.logger.error("[%s] cloudscraper fallback also failed: %s", self.source_name, e)
-
-        return None
-
-    @staticmethod
-    def extract_price(text: str) -> float:
-        """Extract a numeric price from a string like 'AED 1,299.00'."""
-        if not text:
-            return 0.0
-        numbers = re.findall(r"[\d,]+\.?\d*", text.replace(",", ""))
-        return float(numbers[0]) if numbers else 0.0
-
-    @abstractmethod
-    def _get_homepage(self) -> str:
-        """Return the homepage URL for the Referer header."""
-        ...
-
-    @abstractmethod
-    def search(self, query: str) -> list:
-        """Search for products and return a list of Product objects."""
-        ...
-```
-
-### `src/scrapers/noon_scraper.py`
-
-```python
-# src/scrapers/noon_scraper.py
-
-from src.scrapers.base_scraper import BaseScraper
-from src.models.product import Product
-
-class NoonScraper(BaseScraper):
-    """Scraper for noon.com (UAE)."""
-
-    def __init__(self):
-        super().__init__("noon")
-
-    def _get_homepage(self) -> str:
-        return "https://www.noon.com/"
-
-    def search(self, query: str) -> list[Product]:
-        """Search Noon for products matching the query."""
-        try:
-            products = []
-            url = f"https://www.noon.com/uae-en/search/?q={query}"
-
-            for page in range(1, self.settings.MAX_PAGES + 1):
-                soup = self._get_page(url)
-                if not soup:
-                    break
-
-                cards = soup.select(self.selectors["product_card"])
-                for card in cards:
-                    title_el = card.select_one(self.selectors["title"])
-                    price_el = card.select_one(self.selectors["price"])
-                    rating_el = card.select_one(self.selectors.get("rating", ""))
-                    url_el = card.select_one(self.selectors["url"])
-
-                    products.append(Product(
-                        title=title_el.get_text(strip=True) if title_el else "N/A",
-                        price=self.extract_price(price_el.get_text() if price_el else ""),
-                        currency="AED",
-                        rating=rating_el.get_text(strip=True) if rating_el else "",
-                        url=f"https://www.noon.com{url_el['href']}" if url_el else "",
-                        source="noon",
-                    ))
-
-                next_btn = soup.select_one(self.selectors.get("next_page", ""))
-                if next_btn and next_btn.get("href"):
-                    url = f"https://www.noon.com{next_btn['href']}"
-                else:
-                    break
-
-            return products
-        except Exception as e:
-            self.logger.error("[noon] Search failed: %s", e)
-            return []
-```
-
-### `src/scrapers/amazon_scraper.py`
-
-```python
-# src/scrapers/amazon_scraper.py
-
-from src.scrapers.base_scraper import BaseScraper
-from src.models.product import Product
-
-class AmazonScraper(BaseScraper):
-    """Scraper for amazon.ae (UAE)."""
-
-    def __init__(self):
-        super().__init__("amazon")
-
-    def _get_homepage(self) -> str:
-        return "https://www.amazon.ae/"
-
-    def search(self, query: str) -> list[Product]:
-        """Search Amazon.ae for products matching the query."""
-        try:
-            products = []
-            url = f"https://www.amazon.ae/s?k={query}"
-
-            for page in range(1, self.settings.MAX_PAGES + 1):
-                soup = self._get_page(url)
-                if not soup:
-                    break
-
-                cards = soup.select(self.selectors["product_card"])
-                for card in cards:
-                    title_el = card.select_one(self.selectors["title"])
-                    price_el = card.select_one(self.selectors["price"])
-                    rating_el = card.select_one(self.selectors.get("rating", ""))
-                    url_el = card.select_one(self.selectors["url"])
-
-                    products.append(Product(
-                        title=title_el.get_text(strip=True) if title_el else "N/A",
-                        price=self.extract_price(price_el.get_text() if price_el else ""),
-                        currency="AED",
-                        rating=rating_el.get_text(strip=True) if rating_el else "",
-                        url=f"https://www.amazon.ae{url_el['href']}" if url_el else "",
-                        source="amazon",
-                    ))
-
-                next_btn = soup.select_one(self.selectors.get("next_page", ""))
-                if next_btn and next_btn.get("href"):
-                    url = f"https://www.amazon.ae{next_btn['href']}"
-                else:
-                    break
-
-            return products
-        except Exception as e:
-            self.logger.error("[amazon] Search failed: %s", e)
-            return []
-```
+All scrapers wrap operations in `try/except`, returning `[]` on failure rather than crashing.
 
 ---
 
-## 7. TUI Application
+## 7. Search Orchestration & Filtering Pipeline
 
-### 7.1 Layout & Composition
+### `SearchOrchestrator` (`src/services/search_orchestrator.py`)
 
-The TUI is built with `textual`. The `compose()` method defines the widget tree:
+Coordinates the full search lifecycle:
 
-```
-┌─ Header ──────────────────────────────────────────────┐
-│ ecom_search                                            │
-├────────────────────────────────────────────────────────┤
-│  ┌─ #search_bar (Horizontal) ──────────────────────┐  │
-│  │  [ Search products...              ] [ Search ] │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─ #source_toggles (Horizontal) ──────────────────┐  │
-│  │        [x] Noon       [x] Amazon                │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─ #status ───────────────────────────────────────┐  │
-│  │  Ready                                          │  │
-│  └─────────────────────────────────────────────────┘  │
-│  ┌─ #results_table (DataTable) ────────────────────┐  │
-│  │  Title          │ Price      │ Rating │ Source   │  │
-│  │  ───────────────┼────────────┼────────┼──────── │  │
-│  │  Product A      │ 199 AED ✓  │ ⭐ 4.5 │ NOON    │  │
-│  │  Product B      │ 249 AED    │ ⭐ 4.2 │ AMAZON  │  │
-│  └─────────────────────────────────────────────────┘  │
-├─ Footer ──────────────────────────────────────────────┤
-│  q Quit │ s Save │ p Price Sort │ r Rating Sort       │
-└────────────────────────────────────────────────────────┘
-```
+1. **Query Parsing** — `QueryParser` handles boolean syntax (`OR`, `AND`, `-exclusion`, parentheses)
+2. **Query Enhancement** — `QueryEnhancer` expands synonyms/variants
+3. **Concurrent Scraping** — Dispatches selected scrapers via `asyncio.gather()` with per-source timeouts
+4. **Validation** — `ProductValidator` checks required fields, price > 0, valid URLs
+5. **Keyword Filtering** — `ProductFilter` applies negative keywords from user input
+6. **Deduplication** — `Deduplicator` removes URL-based duplicates
+7. **Auto-Recording** — Saves all valid products to SQLite price history
 
-### 7.2 Source Selection Checkboxes
+Returns a `SearchResult` dataclass with products, error messages, and pipeline statistics (filtered count, deduped count, invalid count, total before filter).
 
-This is the **core feature** that makes source selection dynamic rather than hardcoded.
+### Multi-Query Support
 
-#### Design Rationale
+Semicolon-separated queries (e.g., `"collagen; vitamin c"`) are executed as independent parallel searches and merged.
 
-| Concern | Decision |
+---
+
+## 8. Price History & Tracking
+
+### `PriceHistoryDB` (`src/storage/price_history_db.py`)
+
+SQLite-based persistent price tracking:
+
+**Schema:**
+- `products` table: `id`, `url` (unique, normalized), `title`, `source`, `first_seen`, `is_starred`
+- `price_snapshots` table: `id`, `product_id` (FK), `price`, `currency`, `scraped_at`
+- Index on `(product_id, scraped_at)` for fast trend queries
+
+**Key Methods:**
+| Method | Description |
 |---|---|
-| **Default state** | Both checkboxes are `value=True` (checked) so a fresh launch searches all sources. |
-| **Zero-selection guard** | If no checkbox is checked, `perform_search()` shows an error notification and aborts. |
-| **Extensibility** | Adding a new source (e.g., Carrefour) requires: adding a checkbox with `id="check_carrefour"`, adding its scraper class, and adding one `if` block. |
-| **Widget IDs** | Each checkbox follows the pattern `check_{source_id}` (e.g., `check_noon`, `check_amazon`). |
+| `record_snapshots()` | Upsert products + insert price snapshots |
+| `get_price_history()` | All snapshots for a URL, ordered by date |
+| `get_price_trends()` | Multi-product trend data for charting |
+| `get_trend_summary()` | Min/max/avg/direction for trend indicators |
+| `toggle_star()` | Pin/unpin a product for watchlist |
+| `is_starred()` | Check star status |
+| `get_starred_products()` | All starred products with stats |
+| `search_products_by_title()` | Find products by title substring |
+| `import_single_file()` | Import one legacy JSON result file |
+| `import_legacy_results()` | Bulk import all files from results/ dir |
 
-#### Widget Definition (in `compose()`)
+**URL Normalization:** Strips query parameters (tracking params like `ref=`, `dib=`, `qid=`) and Amazon path-based `/ref=...` segments to match the same product across searches.
 
-```python
-# Inside EcomSearchApp.compose()
-Horizontal(
-    Checkbox("Noon", value=True, id="check_noon"),
-    Checkbox("Amazon", value=True, id="check_amazon"),
-    id="source_toggles"
-)
-```
+**Auto-Recording:** Every search automatically records snapshots via `SearchOrchestrator`, building history over time without user intervention.
 
-#### Reading Checkbox State (in `perform_search()`)
+---
 
-```python
-# Inside EcomSearchApp.perform_search()
-use_noon = self.query_one("#check_noon").value      # bool
-use_amazon = self.query_one("#check_amazon").value  # bool
+## 9. TUI Application
 
-if not use_noon and not use_amazon:
-    self.notify("Select at least one source!", severity="error")
-    return
-```
+### `EcomSearchApp` (`src/ui/app.py`)
 
-#### Conditional Scraper Dispatch
+Built with [Textual](https://textual.textualize.io/) — a modern Python TUI framework.
 
-Only scrapers whose checkboxes are checked get added to the `asyncio.gather()` call:
-
-```python
-tasks = []
-
-async def run_scraper(scraper_cls):
-    """Execute a scraper in a thread to avoid blocking the TUI."""
-    return await asyncio.to_thread(scraper_cls().search, query)
-
-if use_noon:
-    tasks.append(run_scraper(NoonScraper))
-if use_amazon:
-    tasks.append(run_scraper(AmazonScraper))
-
-results = await asyncio.gather(*tasks, return_exceptions=True)
-```
-
-### 7.3 Search Flow
+### Layout
 
 ```
-User presses Search / Enter
-        │
-        ▼
-┌─ perform_search() ────────────────────────────────────────┐
-│  1. Read query from #search_input                         │
-│  2. Validate query is not empty                           │
-│  3. ★ Read #check_noon.value and #check_amazon.value ★    │
-│  4. Validate at least one source is selected              │
-│  5. Clear previous results                                │
-│  6. Build task list from checked sources only              │
-│  7. await asyncio.gather(*tasks)                          │
-│  8. Merge results into self.products                      │
-│  9. Call populate_table()                                  │
-│ 10. Update #status with count or "No products found"      │
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────── Header ───────────────────────┐
+│  🛒 E-commerce Search (Noon, Amazon, BinSina, ...)   │
+├──────────────────────────────────────────────────────┤
+│  [Search Input                          ] [Search]   │
+│  [Exclude keywords: serum, cream, mask...]           │
+│  ▼ Sources                                           │
+│    [x] Noon  [x] Amazon  [x] BinSina                │
+│    [x] Life  [x] Aster   [x] iHerb                  │
+│  Status: ✅ Found 42 products (3 filtered, saved)    │
+│  [LoadingIndicator — visible during search]          │
+├──────────────────────────────────────────────────────┤
+│  ┌─Results─┐ ┌─Price History─┐ ┌─Watchlist─┐        │
+│  │ Title      │ Price │ Rating │ Source │ Trend │    │
+│  │ Product A  │ 45.00 │ 4.5    │ amazon │  ↓   │    │
+│  │ ★ Product B│ 52.00 │ 4.8    │ noon   │  ↑   │    │
+│  └───────────────────────────────────────────────┘   │
+├──────────────────────── Footer ──────────────────────┤
+│  q:Quit s:Save e:CSV p:Price r:Rating c:URL         │
+│  x:CopyAll i:Cache h:History t:Star w:Watch o:Chart  │
+└──────────────────────────────────────────────────────┘
 ```
 
-### 7.4 Results Table
+### Tabs
 
-| Column | Content | Notes |
-|---|---|---|
-| **Title** | `p.title[:60]` | Truncated to 60 chars |
-| **Price** | `{p.price} {p.currency}` | **Bold green** if it's the lowest price |
-| **Rating** | `⭐ {p.rating}` | Empty string if no rating |
-| **Source** | `p.source.upper()` | `NOON` or `AMAZON` |
+| Tab | Content |
+|---|---|
+| **Results** | DataTable with Title, Price, Rating, Source, Trend columns |
+| **Price History** | PlotextPlot ASCII chart + stats for selected product |
+| **Watchlist** | DataTable of starred products with min/max/avg/latest prices |
 
-### 7.5 Key Bindings & Actions
+### Key Bindings
 
 | Key | Action | Description |
 |---|---|---|
-| `q` | `action_quit` | Exit the app |
-| `s` | `action_save` | Save results to file via `FileManager` |
-| `p` | `action_sort_price` | Sort products by price ascending |
-| `r` | `action_sort_rating` | Sort products by rating descending |
-| `c` | `action_copy_url` | Copy selected product URL to clipboard |
-| `Enter` (on row) | `on_data_table_row_selected` | Open product URL in browser |
+| `q` | Quit | Exit the application |
+| `s` | Save | Save results to JSON |
+| `e` | Export CSV | Export results as CSV |
+| `p` | Price Sort | Toggle price sort asc/desc |
+| `r` | Rating Sort | Toggle rating sort asc/desc |
+| `c` | Copy URL | Copy selected product URL to clipboard |
+| `x` | Copy All | Copy all results as TSV to clipboard |
+| `i` | Clear Cache | Invalidate the query cache |
+| `h` | History | Show price history chart for selected product |
+| `t` | Star | Toggle star/pin on selected product |
+| `w` | Watchlist | Switch to watchlist tab |
+| `o` | Browser Chart | Open interactive Plotly chart in browser |
+
+### Trend Indicators
+
+The Trend column shows directional arrows based on price history:
+- **↑** (green) — Price trending up
+- **↓** (red) — Price trending down
+- **→** (dim) — Price stable
+- Starred products show ★ prefix on title
 
 ---
 
-## 8. Styling (CSS)
+## 10. CLI Mode
 
-### `src/ui/styles.css`
+Run headless searches without the TUI:
 
-All TUI styles live in this file. **No inline styles** in Python unless computing dynamic values.
+```bash
+# Basic search
+python main.py "collagen peptides"
 
-```css
-/* src/ui/styles.css */
+# Filter sources and exclude keywords
+python main.py "vitamin c" -s noon,amazon -e "serum,cream"
 
-/* --- Title Banner --- */
-#title {
-    text-align: center;
-    background: $primary;
-    color: $text;
-    padding: 1;
-    text-style: bold;
-}
+# Output as table instead of JSON
+python main.py "krill oil" -f table
 
-/* --- Search Bar --- */
-#search_bar {
-    height: 3;
-    padding: 1 1 0 1;
-    background: $surface;
-}
+# Custom output directory
+python main.py "collagen" -o ./my_results
 
-#search_input {
-    width: 4fr;
-}
+# Health check all sources
+python main.py --health
 
-#search_btn {
-    width: 1fr;
-    min-width: 10;
-}
+# Import legacy JSON results into SQLite
+python main.py --import-history
 
-/* --- Source Selection Checkboxes --- */
-#source_toggles {
-    height: 3;
-    padding: 0 1 1 1;
-    background: $surface;
-    align: center middle;
-}
+# Generate browser chart for matching products
+python main.py --chart "collagen"
 
-Checkbox {
-    padding: 0 2;
-}
-
-/* --- Status Bar --- */
-#status {
-    height: 1;
-    padding: 0 1;
-    background: $panel;
-    color: $text;
-}
-
-/* --- Results Table --- */
-#results_table {
-    height: 1fr;
-    border: solid $primary;
-}
-
-DataTable > .datatable--cursor {
-    background: $secondary 30%;
-}
+# Generate watchlist dashboard chart
+python main.py --watchlist
 ```
 
-#### Key Styling Decisions
+---
 
-| Rule | Purpose |
+## 11. Charts & Visualization
+
+### In-TUI Charts (textual-plotext)
+
+Press `h` on a product to view an ASCII price history chart directly in the terminal. Uses `PlotextPlot` widget from `textual-plotext`. Shows min/max/average statistics alongside the chart.
+
+### Browser Charts (Plotly HTML)
+
+`ChartExporter` (`src/storage/chart_exporter.py`) generates standalone interactive HTML charts:
+
+| Function | Description |
 |---|---|
-| `#source_toggles` has `align: center middle` | Centers the checkboxes horizontally for a clean look |
-| `#source_toggles` shares `background: $surface` with `#search_bar` | Creates a visually unified input area |
-| `Checkbox { padding: 0 2 }` | Adds horizontal breathing room between checkbox labels |
-| `#search_bar` uses `padding: 1 1 0 1` (no bottom) | The source toggles sit flush beneath the search bar |
-| `#source_toggles` uses `padding: 0 1 1 1` (no top) | Completes the visual group with bottom padding |
+| `export_price_chart()` | Single product line chart with min/max annotations |
+| `export_comparison_chart()` | Multi-product overlay for comparison |
+| `export_watchlist_dashboard()` | Dashboard for all starred products |
+
+Charts are saved to `data/charts/` and auto-opened in the default browser. Features: hover tooltips, source color-coding, min/max annotations, responsive layout.
 
 ---
 
-## 9. Storage & Export
+## 12. Storage & Export
 
-### `src/storage/file_manager.py`
-
-```python
-# src/storage/file_manager.py
-
-import json
-import csv
-from pathlib import Path
-from datetime import datetime
-from src.config.settings import Settings
-from src.models.product import Product
-
-class FileManager:
-    """Handles saving search results to disk."""
-
-    def __init__(self):
-        self.results_dir = Settings.RESULTS_DIR
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-
-    def save_results(self, query: str, products: list[Product], source: str) -> Path:
-        """Save a list of products to a timestamped JSON file."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{source}_{query.replace(' ', '_')}_{timestamp}.json"
-        filepath = self.results_dir / filename
-
-        data = [
-            {
-                "title": p.title,
-                "price": p.price,
-                "currency": p.currency,
-                "rating": p.rating,
-                "url": p.url,
-                "source": p.source,
-            }
-            for p in products
-        ]
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-
-        return filepath
-```
+| Component | Purpose | Location |
+|---|---|---|
+| `FileManager` | JSON/CSV result export | `results/` |
+| `PriceHistoryDB` | SQLite price tracking | `data/price_history.db` |
+| `ChartExporter` | Plotly HTML charts | `data/charts/` |
+| `QueryCache` | In-memory query dedup | (runtime only) |
 
 ---
 
-## 10. Anti-Detection Strategy
+## 13. Anti-Detection Strategy
 
-| Layer | Mechanism |
+| Technique | Implementation |
 |---|---|
-| **HTTP Client** | `curl_cffi` with `impersonate="chrome124"` — mimics a real Chrome TLS fingerprint |
-| **Headers** | `Accept-Language`, `Referer` (site homepage) sent on every request |
-| **Rate Limiting** | `Settings.REQUEST_DELAY` (2s default) enforced between every request |
-| **Retry Backoff** | Exponential: `delay * (attempt + 1)` on failure |
-| **Fallback** | `cloudscraper` auto-triggers in `_get_page()` after `MAX_RETRIES` curl_cffi failures |
-| **Selector Separation** | Selectors in JSON, not code — fast recovery when site layouts change |
-
-### Fallback Mechanism
-
-The `BaseScraper._get_page()` method implements a **two-tier fetching strategy**:
-
-1. **Primary** — `curl_cffi` with `MAX_RETRIES` attempts and exponential backoff.
-2. **Fallback** — If all `curl_cffi` attempts fail (blocked, timeout, network error), a single `cloudscraper` request is attempted as a last resort.
-
-This ensures that even when a marketplace starts fingerprinting `curl_cffi`'s TLS signature, the scraper degrades gracefully to `cloudscraper`'s JS challenge solver rather than returning zero results.
+| **Browser impersonation** | `curl_cffi` with `impersonate="chrome124"` |
+| **Realistic headers** | `Accept-Language`, `Referer` to target homepage |
+| **Rate limiting** | `Settings.REQUEST_DELAY` between requests |
+| **Fallback client** | `cloudscraper` if `curl_cffi` fails |
+| **Selector separation** | CSS selectors in JSON, not hardcoded |
+| **Graceful failure** | Scrapers return `[]` on error, never crash |
 
 ---
 
-## 11. Testing Strategy
-
-### Principles
-
-- **Never hit live URLs** in automated tests to avoid IP bans.
-- **Mock `curl_requests.Session`** to return saved HTML fixtures.
-- **Validate** against `selectors.json` keys (`product_card`, `title`, `price`, etc.).
-
-### Example Test Structure
-
-```python
-# tests/test_noon_scraper.py
-
-import unittest
-from unittest.mock import patch, MagicMock
-from src.scrapers.noon_scraper import NoonScraper
-
-class TestNoonScraper(unittest.TestCase):
-    """Tests for the Noon scraper using mocked HTTP responses."""
-
-    @patch("src.scrapers.base_scraper.curl_requests.Session")
-    def test_search_returns_products(self, mock_session_cls):
-        """Verify that search() parses a fixture page into Product objects."""
-        mock_session = MagicMock()
-        mock_session_cls.return_value = mock_session
-
-        with open("tests/fixtures/noon_search.html") as f:
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.text = f.read()
-            mock_session.get.return_value = mock_resp
-
-        scraper = NoonScraper()
-        scraper.session = mock_session
-        products = scraper.search("iphone")
-
-        self.assertGreater(len(products), 0)
-        self.assertEqual(products[0].source, "noon")
-
-    @patch("src.scrapers.base_scraper.curl_requests.Session")
-    def test_search_handles_empty_page(self, mock_session_cls):
-        """Verify graceful handling when no products are found."""
-        mock_session = MagicMock()
-        mock_session_cls.return_value = mock_session
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.text = "<html><body></body></html>"
-        mock_session.get.return_value = mock_resp
-
-        scraper = NoonScraper()
-        scraper.session = mock_session
-        products = scraper.search("nonexistent_product_xyz")
-
-        self.assertEqual(products, [])
-```
-
----
-
-## 12. Implementation Checklist
-
-### Phase 1: Foundation
-- [ ] Create directory structure (`src/config/`, `src/models/`, `src/scrapers/`, `src/storage/`, `src/ui/`)
-- [ ] Create `src/config/settings.py` with all constants
-- [ ] Create `src/config/selectors.json` with Noon & Amazon selectors
-- [ ] Create `src/models/product.py` with `Product` dataclass
-- [ ] Create `.env` file (empty template)
-
-### Phase 2: Scraping Engine
-- [ ] Implement `src/scrapers/base_scraper.py`
-- [ ] Implement `src/scrapers/noon_scraper.py`
-- [ ] Implement `src/scrapers/amazon_scraper.py`
-- [ ] Validate selectors against live pages (manual dry run)
-
-### Phase 3: TUI Application
-- [ ] Implement `src/ui/app.py` with full `compose()` layout
-- [ ] **Add `Checkbox` imports and widgets for source selection**
-- [ ] **Add `#source_toggles` container with `check_noon` and `check_amazon`**
-- [ ] **Implement checkbox-aware `perform_search()` with zero-selection guard**
-- [ ] Implement `populate_table()` with lowest-price highlighting
-- [ ] Implement all key binding actions (`sort`, `save`, `copy_url`)
-- [ ] Create `src/ui/styles.css` with `#source_toggles` and `Checkbox` rules
-
-### Phase 4: Storage
-- [ ] Implement `src/storage/file_manager.py`
-- [ ] Create `results/` directory on first save
-
-### Phase 5: Entry Point & Polish
-- [ ] Create `main.py`
-- [ ] End-to-end manual test with checkboxes toggled
-- [ ] Verify TUI does not freeze during search (async correctness)
-
-### Phase 6: Testing
-- [ ] Create `tests/fixtures/` with saved HTML pages
-- [ ] Write `test_noon_scraper.py` with mocked HTTP
-- [ ] Write `test_amazon_scraper.py` with mocked HTTP
-- [ ] Verify all `selectors.json` keys are used correctly
-
----
-
-## Appendix A: Full `src/ui/app.py`
-
-```python
-# src/ui/app.py
-
-import asyncio
-import webbrowser
-
-from rich.text import Text
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, Input, Button, DataTable, Static, Checkbox
-
-from src.scrapers.noon_scraper import NoonScraper
-from src.scrapers.amazon_scraper import AmazonScraper
-from src.storage.file_manager import FileManager
-
-
-class EcomSearchApp(App):
-    """Terminal UI for the ecom_search price comparison engine."""
-
-    CSS_PATH = "styles.css"
-
-    BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("s", "save", "Save"),
-        Binding("p", "sort_price", "Price Sort"),
-        Binding("r", "sort_rating", "Rating Sort"),
-        Binding("c", "copy_url", "Copy URL"),
-    ]
-
-    def __init__(self):
-        super().__init__()
-        self.products = []
-        self.current_query = ""
-        self.file_manager = FileManager()
-
-    def compose(self) -> ComposeResult:
-        """Build the widget tree for the TUI."""
-        yield Header()
-        yield Container(
-            Static("🛒 E-commerce Search (Noon & Amazon)", id="title"),
-
-            # Search Bar
-            Horizontal(
-                Input(placeholder="Search products...", id="search_input"),
-                Button("Search", variant="primary", id="search_btn"),
-                id="search_bar",
-            ),
-
-            # Source Selection Checkboxes
-            Horizontal(
-                Checkbox("Noon", value=True, id="check_noon"),
-                Checkbox("Amazon", value=True, id="check_amazon"),
-                id="source_toggles",
-            ),
-
-            Static("Ready", id="status"),
-            DataTable(id="results_table", zebra_stripes=True, cursor_type="row"),
-            id="main_container",
-        )
-        yield Footer()
-
-    def on_mount(self):
-        """Configure the results table columns on startup."""
-        self.query_one("#results_table").add_columns("Title", "Price", "Rating", "Source")
-
-    async def on_button_pressed(self, event):
-        """Handle button click events."""
-        if event.button.id == "search_btn":
-            await self.perform_search()
-
-    async def on_input_submitted(self, event):
-        """Handle Enter key in the search input."""
-        if event.input.id == "search_input":
-            await self.perform_search()
-
-    async def perform_search(self):
-        """Execute a search against the selected sources."""
-        query = self.query_one("#search_input").value.strip()
-        if not query:
-            self.notify("Please enter a search term", severity="warning")
-            return
-
-        # --- Check Source Selection ---
-        use_noon = self.query_one("#check_noon").value
-        use_amazon = self.query_one("#check_amazon").value
-
-        if not use_noon and not use_amazon:
-            self.notify("Select at least one source!", severity="error")
-            return
-
-        self.current_query = query
-        self.products = []
-        self.query_one("#results_table").clear()
-        self.query_one("#status").update(f"🔍 Searching '{query}'...")
-
-        # Build task list from checked sources only
-        tasks = []
-
-        async def run_scraper(scraper_cls):
-            """Run a blocking scraper in a thread to keep UI responsive."""
-            return await asyncio.to_thread(scraper_cls().search, query)
-
-        if use_noon:
-            tasks.append(run_scraper(NoonScraper))
-        if use_amazon:
-            tasks.append(run_scraper(AmazonScraper))
-
-        # Execute selected tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for batch in results:
-            if isinstance(batch, list):
-                self.products.extend(batch)
-            elif isinstance(batch, Exception):
-                self.notify(f"Error: {batch}", severity="error")
-
-        self.populate_table()
-
-        if not self.products:
-            self.query_one("#status").update("❌ No products found")
-        else:
-            self.query_one("#status").update(f"✅ Found {len(self.products)} products")
-
-    def populate_table(self):
-        """Fill the DataTable with current product results."""
-        table = self.query_one("#results_table")
-        table.clear()
-        if not self.products:
-            return
-
-        min_price = min((p.price for p in self.products if p.price > 0), default=0)
-
-        for p in self.products:
-            price_style = "bold green" if p.price == min_price and p.price > 0 else ""
-            table.add_row(
-                p.title[:60],
-                Text(f"{p.price} {p.currency}", style=price_style),
-                f"⭐ {p.rating}" if p.rating else "",
-                p.source.upper(),
-            )
-
-    def on_data_table_row_selected(self, event):
-        """Open the selected product's URL in the default browser."""
-        if 0 <= event.cursor_row < len(self.products):
-            webbrowser.open(self.products[event.cursor_row].url)
-
-    def action_sort_price(self):
-        """Sort products by price, ascending."""
-        self.products.sort(key=lambda p: p.price if p.price > 0 else float("inf"))
-        self.populate_table()
-
-    def action_sort_rating(self):
-        """Sort products by rating, descending."""
-        self.products.sort(key=lambda p: p.rating or "", reverse=True)
-        self.populate_table()
-
-    def action_save(self):
-        """Save current results to a JSON file."""
-        if self.products:
-            path = self.file_manager.save_results(self.current_query, self.products, "combined")
-            self.notify(f"Saved to {path}")
-
-    def action_copy_url(self):
-        """Copy the selected product's URL to the clipboard."""
-        try:
-            import pyperclip
-
-            row = self.query_one("#results_table").cursor_row
-            pyperclip.copy(self.products[row].url)
-            self.notify("URL Copied")
-        except Exception:
-            self.notify("Install pyperclip", severity="warning")
-```
-
----
-
-## Appendix B: `main.py`
-
-```python
-# main.py
-
-from src.ui.app import EcomSearchApp
-
-def main():
-    """Launch the ecom_search TUI application."""
-    app = EcomSearchApp()
-    app.run()
-
-if __name__ == "__main__":
-    main()
-```
+## 14. Testing Strategy
+
+- **Framework**: `unittest` (TestCase + IsolatedAsyncioTestCase) run via `pytest`
+- **Coverage**: 324+ tests across all modules
+- **Mocking**: All HTTP calls mocked — never hits live sites during tests
+- **Linter gate**: `pylance.sh` enforces flake8 (88-char lines, max-complexity 10) + pyright strict mode
+- **Zero tolerance**: No `# type: ignore`, no `# noqa` — all checks must pass clean
+- **Deterministic**: Fixed data, no randomness in tests
