@@ -20,6 +20,7 @@ from textual.widgets import (
     Footer,
     Header,
     Input,
+    LoadingIndicator,
     Static,
     TabbedContent,
     TabPane,
@@ -129,6 +130,7 @@ class EcomSearchApp(App[object]):
             )
 
             yield Static("Ready", id="status")
+            yield LoadingIndicator(id="loader")
 
             # Tabbed view
             with TabbedContent(id="tabs"):
@@ -192,6 +194,9 @@ class EcomSearchApp(App[object]):
         table.add_columns(
             "Title", "Price", "Rating", "Source", "Trend",
         )
+        self.query_one(
+            "#loader", LoadingIndicator,
+        ).display = False
         watchlist = cast(
             DataTable[str | Text],
             self.query_one("#watchlist_table", DataTable),
@@ -257,12 +262,15 @@ class EcomSearchApp(App[object]):
             self.query_one("#results_table", DataTable),
         )
         status = self.query_one("#status", Static)
+        loader = self.query_one("#loader", LoadingIndicator)
         table.clear()
         status.update(f"🔍 Searching '{query}'...")
+        loader.display = True
 
         result = await self.orchestrator.multi_search(
             query, selected_sources, negative_keywords
         )
+        loader.display = False
 
         for error_msg in result.errors:
             self.notify(f"Error: {error_msg}", severity="error")

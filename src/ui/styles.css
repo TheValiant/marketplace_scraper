@@ -55,6 +55,12 @@ Checkbox {
     color: $text;
 }
 
+/* --- Loading Indicator --- */
+#loader {
+    height: 1;
+    color: $primary;
+}
+
 /* --- Results Table --- */
 #results_table {
     height: 1fr;

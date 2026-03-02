@@ -11,6 +11,7 @@ from textual.widgets import (
     Collapsible,
     DataTable,
     Input,
+    LoadingIndicator,
     Static,
     TabbedContent,
 )
@@ -317,6 +318,60 @@ class TestEcomSearchApp(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             tabs = app.query_one("#tabs", TabbedContent)
             self.assertEqual(tabs.active, "watchlist_tab")
+
+    async def test_loading_indicator_hidden_on_mount(
+        self,
+    ) -> None:
+        """LoadingIndicator should be hidden when the app starts."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            loader = app.query_one(
+                "#loader", LoadingIndicator,
+            )
+            self.assertFalse(loader.display)
+            await pilot.pause()
+
+    async def test_loading_indicator_shown_during_search(
+        self,
+    ) -> None:
+        """LoadingIndicator should be visible while searching."""
+        app = EcomSearchApp()
+        async with app.run_test() as pilot:
+            loader_was_visible = False
+
+            async def _spy_search(
+                *args: Any, **kwargs: Any,
+            ) -> MagicMock:
+                nonlocal loader_was_visible
+                loader = app.query_one(
+                    "#loader", LoadingIndicator,
+                )
+                loader_was_visible = loader.display
+                return MagicMock(
+                    products=[],
+                    errors=[],
+                    excluded_count=0,
+                    deduplicated_count=0,
+                    invalid_count=0,
+                    total_before_filter=0,
+                )
+
+            with patch.object(
+                app.orchestrator, "multi_search",
+                side_effect=_spy_search,
+            ):
+                search_input = app.query_one(
+                    "#search_input", Input,
+                )
+                search_input.value = "test"
+                await app.perform_search()
+                await pilot.pause()
+
+            self.assertTrue(loader_was_visible)
+            loader = app.query_one(
+                "#loader", LoadingIndicator,
+            )
+            self.assertFalse(loader.display)
 
 
 if __name__ == "__main__":
