@@ -41,7 +41,10 @@ files=(
   src/scrapers/binsina_scraper.py
   src/scrapers/iherb_scraper.py
   src/scrapers/life_pharmacy_scraper.py
+  src/scrapers/lulu_scraper.py
   src/scrapers/noon_scraper.py
+  src/scrapers/sephora_scraper.py
+  src/scrapers/carrefour_scraper.py
 
   # ── Source: services ──
   src/services/__init__.py

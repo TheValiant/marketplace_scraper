@@ -25,5 +25,33 @@
         "rating": "a.stars",
         "url": "a.product-link",
         "next_page": "a.pagination-next"
+    },
+    "carrefour": {
+        "product_card": "a[data-testid='hf_product']",
+        "title": "span[data-testid='hf_product_name']",
+        "price": "span[data-testid='hf_product_price']",
+        "currency": "",
+        "rating": "",
+        "url": "a[data-testid='hf_product']",
+        "next_page": ""
+    },
+    "sephora": {
+        "product_card": "div.grid-tile",
+        "title": "a.link.product-name",
+        "brand": "a.link.product-brand",
+        "price": "span.value",
+        "currency": "",
+        "rating": "",
+        "url": "a.link.product-name",
+        "next_page": ""
+    },
+    "lulu": {
+        "product_card": "",
+        "title": "",
+        "price": "",
+        "currency": "",
+        "rating": "",
+        "url": "",
+        "next_page": ""
     }
 }

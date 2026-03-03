@@ -14,10 +14,13 @@ A modular, local e-commerce price comparison engine for UAE markets. Search acro
 | **Life Pharmacy** | REST API | UAE |
 | **Aster** | Elasticsearch API | UAE |
 | **iHerb** | HTML scraping + JSON fallback | UAE |
+| **Carrefour UAE** | Hybrid (Next.js JSON + CSS fallback) | UAE |
+| **Sephora UAE** | HTML scraping (CSS) | UAE |
+| **LuLu Hypermarket** | RSC payload extraction | UAE |
 
 ## Features
 
-- **Multi-source concurrent search** — scrape all 6 marketplaces in parallel with a single query
+- **Multi-source concurrent search** — scrape all 9 marketplaces in parallel with a single query
 - **Multi-query support** — search multiple terms at once using `;` as separator (e.g., `collagen;vitamin d;krill oil`)
 - **Advanced boolean search** — combine terms with `AND`, `OR`, quoted phrases, parentheses, and inline negations (e.g., `("multi collagen" OR "types I II III") AND powder -serum -cream`)
 - **Deterministic subset caching** — in-memory result cache with set-theoretic subset matching; repeat / narrower searches return instantly with zero network calls
@@ -100,6 +103,7 @@ python main.py
 │  Sources:                                            │
 │  [x] Noon    [x] Amazon    [x] BinSina              │
 │  [x] Life    [x] Aster     [x] iHerb                │
+│  [x] Carrefour [x] Sephora [x] LuLu                 │
 ├──────────────────────────────────────────────────────┤
 │  ✅ Showing 42 of 78 products (36 filtered, 5 deduped, 2 invalid, saved) │
 ├──────────────────────────────────────────────────────┤
@@ -144,7 +148,7 @@ python main.py
 The filter input below the search bar accepts comma-separated keywords to exclude irrelevant products. Filtering works at two levels:
 
 **Pre-scrape (query enhancement)**
-For platforms that support boolean exclusion in their search syntax (Amazon, iHerb), negative keywords are appended directly to the search query as `-keyword` terms. This reduces noise at the source and returns cleaner results.
+For platforms that support boolean exclusion in their search syntax (Amazon, iHerb, Carrefour, Sephora, LuLu), negative keywords are appended directly to the search query as `-keyword` terms. This reduces noise at the source and returns cleaner results.
 
 Example: searching `collagen powder` with exclusions `serum, cream` sends `collagen powder -serum -cream` to Amazon.
 
@@ -284,7 +288,8 @@ marketplace_scraper/
 │   │   └── logging_config.py        # Logging setup
 │   │
 │   ├── models/
-│   │   └── product.py               # Product dataclass
+│   │   ├── product.py               # Product dataclass
+│   │   └── price_snapshot.py        # PriceSnapshot dataclass (temporal)
 │   │
 │   ├── scrapers/
 │   │   ├── base_scraper.py          # Abstract base: session, retries, circuit breaker
@@ -293,10 +298,14 @@ marketplace_scraper/
 │   │   ├── binsina_scraper.py       # BinSina (Algolia API)
 │   │   ├── life_pharmacy_scraper.py # Life Pharmacy (REST API)
 │   │   ├── aster_scraper.py         # Aster (Elasticsearch API)
-│   │   └── iherb_scraper.py         # iHerb (HTML + JSON fallback)
+│   │   ├── iherb_scraper.py         # iHerb (HTML + JSON fallback)
+│   │   ├── carrefour_scraper.py     # Carrefour UAE (Hybrid: __NEXT_DATA__ JSON + CSS)
+│   │   ├── sephora_scraper.py       # Sephora UAE (HTML CSS scraping)
+│   │   └── lulu_scraper.py          # LuLu Hypermarket (RSC payload extraction)
 │   │
 │   ├── services/
-│   │   └── search_orchestrator.py   # SearchOrchestrator — coordinates multi-source search
+│   │   ├── search_orchestrator.py   # SearchOrchestrator — coordinates multi-source search
+│   │   └── health_checker.py        # Source connectivity probe
 │   │
 │   ├── filters/
 │   │   ├── product_filter.py        # Post-scrape filtering by negative keywords
@@ -307,6 +316,8 @@ marketplace_scraper/
 │   │
 │   ├── storage/
 │   │   ├── file_manager.py          # JSON/CSV export, clipboard formatting
+│   │   ├── price_history_db.py      # SQLite price history CRUD
+│   │   ├── chart_exporter.py        # Plotly HTML chart generation
 │   │   └── query_cache.py           # In-memory deterministic subset cache
 │   │
 │   └── ui/
@@ -344,7 +355,7 @@ User Input (query + exclusion keywords)
          │
          ▼
 ┌─────────────────────┐
-│   QueryEnhancer     │──▶ Appends -keywords for Amazon/iHerb
+│   QueryEnhancer     │──▶ Appends -keywords for enhanced platforms
 └─────────────────────┘
          │
          ▼
@@ -355,7 +366,10 @@ User Input (query + exclusion keywords)
 │  ├── BinSina (15s)  │    │  rate limit  │
 │  ├── Life (10s)     │    │  circuit     │
 │  ├── Aster (15s)    │    │  breaker +   │
-│  └── iHerb (20s)    │    │  cooldown    │
+│  ├── iHerb (20s)    │    │  cooldown    │
+│  ├── Carrefour(25s) │    │              │
+│  ├── Sephora (20s)  │    │              │
+│  └── LuLu (25s)     │    │              │
 └─────────────────────┘    └──────────────┘
          │
          ▼ list[Product]
@@ -441,8 +455,10 @@ User Input (boolean query + exclusion keywords)
 
 | Type | Scrapers | How it works |
 |---|---|---|
-| **HTML** | Amazon, iHerb | Fetch HTML pages, parse with BeautifulSoup + CSS selectors from `selectors.json` |
+| **HTML (CSS)** | Amazon, iHerb, Sephora | Fetch HTML pages, parse with BeautifulSoup + CSS selectors from `selectors.json` |
 | **JSON API** | Noon, BinSina, Aster, Life Pharmacy | Call marketplace APIs directly, parse JSON responses |
+| **Hybrid** | Carrefour | Extract `__NEXT_DATA__` JSON from Next.js pages, CSS selectors as fallback |
+| **RSC Payload** | LuLu | Extract product JSON from React Server Components streaming payload |
 
 ### Anti-Detection Strategy
 
@@ -469,7 +485,7 @@ All tuneable constants live in `src/config/settings.py`. No magic numbers in scr
 | `CIRCUIT_BREAKER_COOLDOWN` | `60.0` | Seconds before the circuit breaker auto-resets (half-open) |
 | `MAX_DELAY_MULTIPLIER` | `8` | Cap for adaptive backoff multiplier |
 | `IMPERSONATE_BROWSER` | `chrome131` | Browser to impersonate in curl_cffi |
-| `QUERY_ENHANCED_PLATFORMS` | `["amazon", "iherb"]` | Platforms supporting `-keyword` query syntax |
+| `QUERY_ENHANCED_PLATFORMS` | `["amazon", "iherb", "carrefour", "sephora", "lulu"]` | Platforms supporting `-keyword` query syntax |
 | `QUERY_CACHE_TTL` | `3600.0` | In-memory result cache time-to-live (seconds) |
 
 ### Per-Source Timeout
@@ -484,10 +500,13 @@ Each source in `AVAILABLE_SOURCES` can optionally include a `"timeout"` key to o
 | Life Pharmacy | 10s | Fast REST API |
 | BinSina | 15s (default) | Algolia API |
 | Aster | 15s (default) | Elasticsearch API |
+| Carrefour | 25s | Hybrid: __NEXT_DATA__ JSON + CSS fallback |
+| Sephora | 20s | HTML CSS scraping |
+| LuLu | 25s | RSC payload extraction + cloudscraper fallback |
 
 ### CSS Selectors
 
-HTML-based scrapers (Amazon, iHerb) use CSS selectors defined in `src/config/selectors.json`. If a marketplace changes its layout, update the selectors file — not the scraper code.
+HTML-based scrapers (Amazon, iHerb, Carrefour, Sephora) use CSS selectors defined in `src/config/selectors.json`. If a marketplace changes its layout, update the selectors file — not the scraper code. LuLu and Noon use JSON/RSC extraction and don't rely on CSS selectors.
 
 ```json
 {

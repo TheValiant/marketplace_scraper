@@ -38,7 +38,10 @@ class Settings:
     MAX_BASE_QUERIES: int = 10           # DNF explosion cap
 
     # --- Filtering ---
-    QUERY_ENHANCED_PLATFORMS: list[str] = ["amazon", "iherb"]
+    QUERY_ENHANCED_PLATFORMS: list[str] = [
+        "amazon", "iherb", "carrefour", "sephora",
+        "lulu",
+    ]
 
     # --- Deduplication ---
     FUZZY_MATCH_THRESHOLD: int = 85      # rapidfuzz token_set_ratio
@@ -168,5 +171,23 @@ class Settings:
             "label": "iHerb",
             "scraper": "src.scrapers.iherb_scraper.IherbScraper",
             "timeout": "20",
+        },
+        {
+            "id": "carrefour",
+            "label": "Carrefour",
+            "scraper": "src.scrapers.carrefour_scraper.CarrefourScraper",
+            "timeout": "25",
+        },
+        {
+            "id": "sephora",
+            "label": "Sephora",
+            "scraper": "src.scrapers.sephora_scraper.SephoraScraper",
+            "timeout": "20",
+        },
+        {
+            "id": "lulu",
+            "label": "LuLu Hypermarket",
+            "scraper": "src.scrapers.lulu_scraper.LuluScraper",
+            "timeout": "25",
         },
     ]

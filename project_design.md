@@ -1,7 +1,7 @@
 # `ecom_search` — Project Design Document
 
-> **Version**: 2.0
-> **Last Updated**: 2026-03-01
+> **Version**: 2.1
+> **Last Updated**: 2026-03-02
 > **Core Philosophy**: *"Resilience over Speed."*
 
 ---
@@ -27,13 +27,13 @@
 
 ## 1. Overview
 
-`ecom_search` is a **modular, local e-commerce price comparison engine** for UAE markets. It scrapes product listings from **6 sources** (Noon, Amazon.ae, BinSina, Life Pharmacy, Aster, iHerb), presents them in a rich Terminal User Interface (TUI), tracks price history in SQLite, and generates interactive charts — all from the terminal.
+`ecom_search` is a **modular, local e-commerce price comparison engine** for UAE markets. It scrapes product listings from **9 sources** (Noon, Amazon.ae, BinSina, Life Pharmacy, Aster, iHerb, Carrefour UAE, Sephora UAE, LuLu Hypermarket), presents them in a rich Terminal User Interface (TUI), tracks price history in SQLite, and generates interactive charts — all from the terminal.
 
 ### Key Capabilities
 
 | Feature | Description |
 |---|---|
-| **Multi-source search** | Scrapes 6 UAE marketplaces concurrently |
+| **Multi-source search** | Scrapes 9 UAE marketplaces concurrently |
 | **Source selection** | Checkboxes to toggle individual sources on/off |
 | **Boolean query syntax** | Supports `OR`, `AND`, parentheses, `-exclusion` |
 | **Multi-query** | Semicolon-separated queries executed in parallel |
@@ -81,11 +81,12 @@
     └──────────┬──────────────┘
                │
     ┌──────────▼──────────────┐     ┌──────────────────────┐
-    │   6 Scrapers             │     │  Storage Layer        │
+    │   9 Scrapers             │     │  Storage Layer        │
     │   noon, amazon, binsina  │     │  ├ PriceHistoryDB     │
     │   life_pharmacy, aster   │     │  ├ FileManager        │
-    │   iherb                  │     │  ├ ChartExporter      │
-    └──────────────────────────┘     │  └ QueryCache         │
+    │   iherb, carrefour       │     │  ├ ChartExporter      │
+    │   sephora, lulu          │     │  └ QueryCache         │
+    └──────────────────────────┘     │                       │
                                      └──────────────────────┘
 ```
 
@@ -131,7 +132,10 @@ marketplace_scraper/
 │   │   ├── binsina_scraper.py     # BinSina Pharmacy scraper
 │   │   ├── life_pharmacy_scraper.py  # Life Pharmacy scraper
 │   │   ├── aster_scraper.py       # Aster Pharmacy scraper
-│   │   └── iherb_scraper.py       # iHerb scraper
+│   │   ├── iherb_scraper.py       # iHerb scraper
+│   │   ├── carrefour_scraper.py   # Carrefour UAE (Hybrid: __NEXT_DATA__ + CSS)
+│   │   ├── sephora_scraper.py     # Sephora UAE (HTML CSS scraping)
+│   │   └── lulu_scraper.py        # LuLu Hypermarket (RSC payload extraction)
 │   │
 │   ├── filters/
 │   │   ├── query_parser.py        # Boolean query parsing (AND/OR/NOT)
@@ -166,26 +170,31 @@ marketplace_scraper/
 │
 └── tests/
     ├── conftest.py                # Shared fixtures, sleep patch
-    ├── test_noon_scraper.py
+    ├── fixtures/                  # Test fixture data
+    ├── run_search_matrix.py       # Search matrix runner
+    ├── test_advanced_search.py
     ├── test_amazon_scraper.py
-    ├── test_binsina_scraper.py
-    ├── test_life_pharmacy_scraper.py
+    ├── test_app.py
     ├── test_aster_scraper.py
-    ├── test_iherb_scraper.py
     ├── test_base_scraper.py
-    ├── test_search_orchestrator.py
-    ├── test_product_filter.py
-    ├── test_product_validator.py
-    ├── test_query_parser.py
+    ├── test_binsina_scraper.py
+    ├── test_chart_exporter.py
     ├── test_deduplicator.py
     ├── test_file_manager.py
-    ├── test_query_cache.py
-    ├── test_settings.py
-    ├── test_app.py
-    ├── test_cli.py
-    ├── test_price_history_db.py
     ├── test_health_checker.py
-    └── test_chart_exporter.py
+    ├── test_iherb_scraper.py
+    ├── test_life_pharmacy_scraper.py
+    ├── test_logging_config.py
+    ├── test_noon_scraper.py
+    ├── test_price_history_db.py
+    ├── test_product_filter.py
+    ├── test_product_model.py
+    ├── test_product_validator.py
+    ├── test_query_cache.py
+    ├── test_query_enhancer.py
+    ├── test_query_parser.py
+    ├── test_search_orchestrator.py
+    └── test_settings.py
 ```
 
 ---
@@ -198,9 +207,9 @@ All tuneable constants live here. **No magic numbers** in scraper or UI code.
 
 Key settings include:
 - `REQUEST_DELAY`, `REQUEST_TIMEOUT`, `MAX_RETRIES`, `MAX_PAGES`
-- `IMPERSONATE_BROWSER = "chrome124"`
+- `IMPERSONATE_BROWSER = "chrome131"`
 - `BASE_DIR`, `SELECTORS_PATH`, `RESULTS_DIR`, `DATA_DIR`, `PRICE_DB_PATH`
-- `AVAILABLE_SOURCES` — Registry of all 6 scrapers with dotted import paths and optional timeouts
+- `AVAILABLE_SOURCES` — Registry of all 9 scrapers with dotted import paths and optional timeouts
 
 ### `src/config/selectors.json`
 
@@ -222,6 +231,7 @@ Core data transfer object for scraped results:
 | `rating` | `str` | Star rating or review text |
 | `url` | `str` | Product page URL |
 | `source` | `str` | Source identifier (noon, amazon, etc.) |
+| `image_url` | `str` | Product image URL |
 
 ### `PriceSnapshot` (`src/models/price_snapshot.py`)
 
@@ -243,7 +253,7 @@ Temporal price observation for history tracking:
 ### Base Scraper (`src/scrapers/base_scraper.py`)
 
 All scrapers inherit from `BaseScraper` which provides:
-- `curl_cffi` session with `impersonate="chrome124"` and anti-detection headers
+- `curl_cffi` session with `impersonate="chrome131"` and anti-detection headers
 - `extract_price()` static method for consistent price parsing
 - `Referer` header set to target site's homepage
 - Rate limiting via `Settings.REQUEST_DELAY`
@@ -252,12 +262,15 @@ All scrapers inherit from `BaseScraper` which provides:
 
 | Source | Module | Strategy |
 |---|---|---|
-| **Noon** | `noon_scraper.py` | HTML scraping via CSS selectors |
+| **Noon** | `noon_scraper.py` | Internal JSON API (`/api/search`) |
 | **Amazon.ae** | `amazon_scraper.py` | HTML scraping with pagination |
-| **BinSina** | `binsina_scraper.py` | Pharmacy product scraping |
-| **Life Pharmacy** | `life_pharmacy_scraper.py` | Pharmacy product scraping |
-| **Aster** | `aster_scraper.py` | Pharmacy product scraping |
-| **iHerb** | `iherb_scraper.py` | Supplement marketplace scraping |
+| **BinSina** | `binsina_scraper.py` | Algolia search API |
+| **Life Pharmacy** | `life_pharmacy_scraper.py` | REST API (`/api/web/products/search`) |
+| **Aster** | `aster_scraper.py` | Elasticsearch API |
+| **iHerb** | `iherb_scraper.py` | HTML scraping + JSON fallback |
+| **Carrefour UAE** | `carrefour_scraper.py` | Hybrid: `__NEXT_DATA__` JSON + CSS fallback |
+| **Sephora UAE** | `sephora_scraper.py` | HTML CSS scraping via `sephora.me` |
+| **LuLu Hypermarket** | `lulu_scraper.py` | RSC payload extraction + cloudscraper fallback |
 
 All scrapers wrap operations in `try/except`, returning `[]` on failure rather than crashing.
 
@@ -333,6 +346,7 @@ Built with [Textual](https://textual.textualize.io/) — a modern Python TUI fra
 │  ▼ Sources                                           │
 │    [x] Noon  [x] Amazon  [x] BinSina                │
 │    [x] Life  [x] Aster   [x] iHerb                  │
+│    [x] Carrefour [x] Sephora [x] LuLu               │
 │  Status: ✅ Found 42 products (3 filtered, saved)    │
 │  [LoadingIndicator — visible during search]          │
 ├──────────────────────────────────────────────────────┤
@@ -449,7 +463,7 @@ Charts are saved to `data/charts/` and auto-opened in the default browser. Featu
 
 | Technique | Implementation |
 |---|---|
-| **Browser impersonation** | `curl_cffi` with `impersonate="chrome124"` |
+| **Browser impersonation** | `curl_cffi` with `impersonate="chrome131"` |
 | **Realistic headers** | `Accept-Language`, `Referer` to target homepage |
 | **Rate limiting** | `Settings.REQUEST_DELAY` between requests |
 | **Fallback client** | `cloudscraper` if `curl_cffi` fails |
