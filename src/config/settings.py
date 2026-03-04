@@ -2,6 +2,7 @@
 
 """Central configuration for the ecom_search engine."""
 
+import os
 import random
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,16 @@ class Settings:
     FUZZY_PRICE_TOLERANCE: float = 0.05  # 5 % price proximity
 
     # --- Browser Impersonation ---
-    IMPERSONATE_BROWSER: BrowserTypeLiteral = "chrome131"
+    IMPERSONATE_BROWSER: str = os.getenv(
+        "IMPERSONATE_BROWSER", "chrome124"
+    )
+
+    SUPPORTED_IMPERSONATION_BROWSERS: tuple[
+        BrowserTypeLiteral, ...
+    ] = (
+        "chrome124",
+        "chrome131",
+    )
 
     # Pool of browser fingerprints to randomise per session
     _IMPERSONATION_POOL: list[
@@ -70,39 +80,51 @@ class Settings:
                 '"Not_A Brand";v="24"'
             ),
         },
-        {
-            "browser": "edge122",
-            "sec-ch-ua": (
-                '"Microsoft Edge";v="122", '
-                '"Chromium";v="122", '
-                '"Not(A:Brand";v="24"'
-            ),
-        },
-        {
-            "browser": "safari17_0",
-            "sec-ch-ua": "",
-        },
     ]
+
+    @classmethod
+    def get_valid_impersonation_browser(
+        cls, requested: str | None = None,
+    ) -> BrowserTypeLiteral:
+        """Return a supported browser or fall back to a safe default."""
+        candidate = (requested or cls.IMPERSONATE_BROWSER).strip()
+        if candidate in cls.SUPPORTED_IMPERSONATION_BROWSERS:
+            return candidate
+        return "chrome124"
+
+    @classmethod
+    def get_impersonation_headers(
+        cls, browser: BrowserTypeLiteral,
+    ) -> dict[str, str]:
+        """Return default headers aligned with the selected browser."""
+        headers = dict(cls.DEFAULT_HEADERS)
+        for entry in cls._IMPERSONATION_POOL:
+            entry_browser = entry["browser"]
+            if entry_browser != browser:
+                continue
+            ua: str = entry["sec-ch-ua"]
+            headers["sec-ch-ua"] = ua
+            return headers
+        return headers
 
     @classmethod
     def random_impersonation(
         cls,
     ) -> tuple[BrowserTypeLiteral, dict[str, str]]:
         """Pick a random browser identity and matching headers."""
-        entry = random.choice(  # noqa: S311
-            cls._IMPERSONATION_POOL
+        entry = random.choice(cls._IMPERSONATION_POOL)
+        browser: BrowserTypeLiteral = cls.get_valid_impersonation_browser(
+            entry["browser"]
         )
-        browser: BrowserTypeLiteral = entry["browser"]
-        headers = dict(cls.DEFAULT_HEADERS)
-        ua: str = entry["sec-ch-ua"]
-        if ua:
-            headers["sec-ch-ua"] = ua
-        else:
-            # Safari does not send sec-ch-ua headers
-            headers.pop("sec-ch-ua", None)
-            headers.pop("sec-ch-ua-mobile", None)
-            headers.pop("sec-ch-ua-platform", None)
-        return browser, headers
+        return browser, cls.get_impersonation_headers(browser)
+
+    @classmethod
+    def default_impersonation(
+        cls,
+    ) -> tuple[BrowserTypeLiteral, dict[str, str]]:
+        """Return the deterministic browser identity for stable scraping."""
+        browser = cls.get_valid_impersonation_browser()
+        return browser, cls.get_impersonation_headers(browser)
 
     DEFAULT_HEADERS: dict[str, str] = {
         "Accept": (

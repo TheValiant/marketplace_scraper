@@ -464,7 +464,7 @@ User Input (boolean query + exclusion keywords)
 
 | Mechanism | Description |
 |---|---|
-| **Browser impersonation** | `curl_cffi` with `impersonate="chrome131"` mimics real Chrome TLS fingerprint |
+| **Browser impersonation** | `curl_cffi` uses deterministic Chrome impersonation (default `chrome124`, override via `IMPERSONATE_BROWSER`) |
 | **Realistic headers** | Full set of `sec-ch-ua`, `Accept-Language`, `Referer` headers |
 | **Adaptive rate limiting** | Configurable `REQUEST_DELAY` between requests, exponential backoff on failures |
 | **Circuit breaker** | After `CIRCUIT_BREAKER_THRESHOLD` consecutive failures, stops hitting the source; auto-resets after `CIRCUIT_BREAKER_COOLDOWN` (60s) via half-open probe |
@@ -484,7 +484,7 @@ All tuneable constants live in `src/config/settings.py`. No magic numbers in scr
 | `CIRCUIT_BREAKER_THRESHOLD` | `3` | Consecutive failures to trip the circuit breaker |
 | `CIRCUIT_BREAKER_COOLDOWN` | `60.0` | Seconds before the circuit breaker auto-resets (half-open) |
 | `MAX_DELAY_MULTIPLIER` | `8` | Cap for adaptive backoff multiplier |
-| `IMPERSONATE_BROWSER` | `chrome131` | Browser to impersonate in curl_cffi |
+| `IMPERSONATE_BROWSER` | `chrome124` | Browser to impersonate in curl_cffi (`chrome124` or `chrome131`) |
 | `QUERY_ENHANCED_PLATFORMS` | `["amazon", "iherb", "carrefour", "sephora", "lulu"]` | Platforms supporting `-keyword` query syntax |
 | `QUERY_CACHE_TTL` | `3600.0` | In-memory result cache time-to-live (seconds) |
 

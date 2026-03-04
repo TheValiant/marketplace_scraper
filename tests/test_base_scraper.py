@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
+from curl_cffi.requests.exceptions import ImpersonateError
 
 from src.models.product import Product
 from src.scrapers.base_scraper import BaseScraper
@@ -100,6 +101,11 @@ class _StubScraper(BaseScraper):
     def escalate_delay(self) -> None:
         """Public wrapper for _escalate_delay."""
         self._escalate_delay()
+
+    @property
+    def impersonate_browser(self) -> str:
+        """Expose impersonation profile for assertions."""
+        return self._impersonate
 
 
 @patch("src.scrapers.base_scraper.curl_requests.Session")
@@ -488,3 +494,55 @@ class TestRequestTimeout(unittest.TestCase):
         scraper.fetch_get("https://example.com", {})
         call_kwargs = mock_session.get.call_args
         self.assertEqual(call_kwargs.kwargs["timeout"], 25)
+
+
+@patch("src.scrapers.base_scraper.curl_requests.Session")
+class TestImpersonationFailures(unittest.TestCase):
+    """Impersonation errors should fail fast without retries."""
+
+    @patch("src.scrapers.base_scraper.time.sleep")
+    def test_fetch_get_impersonation_error_no_retry(
+        self,
+        mock_sleep: MagicMock,
+        mock_session_cls: MagicMock,
+    ) -> None:
+        """GET returns immediately on non-retryable impersonation errors."""
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+        mock_session.get.side_effect = ImpersonateError(
+            "unsupported"
+        )
+
+        scraper = _StubScraper("test")
+        scraper.session = mock_session
+        result = scraper.fetch_get("https://example.com", {})
+
+        self.assertIsNone(result)
+        self.assertEqual(mock_session.get.call_count, 1)
+        mock_sleep.assert_not_called()
+
+
+@patch("src.scrapers.base_scraper.curl_requests.Session")
+class TestImpersonationSetup(unittest.TestCase):
+    """BaseScraper initialization should use deterministic impersonation."""
+
+    @patch("src.scrapers.base_scraper.Settings.default_impersonation")
+    def test_init_uses_default_impersonation(
+        self,
+        mock_default_impersonation: MagicMock,
+        mock_session_cls: MagicMock,
+    ) -> None:
+        """Scraper init should use Settings.default_impersonation."""
+        mock_default_impersonation.return_value = (
+            "chrome124",
+            {"Accept-Language": "en-US,en;q=0.9"},
+        )
+        mock_session = MagicMock()
+        mock_session_cls.return_value = mock_session
+
+        scraper = _StubScraper("test")
+
+        self.assertEqual(scraper.impersonate_browser, "chrome124")
+        mock_session_cls.assert_called_once_with(
+            impersonate="chrome124"
+        )

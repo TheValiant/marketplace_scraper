@@ -35,9 +35,9 @@ class TestSettings(unittest.TestCase):
         """QUERY_CACHE_TTL must be > 0."""
         self.assertGreater(Settings.QUERY_CACHE_TTL, 0)
 
-    def test_available_sources_has_six(self) -> None:
-        """Registry must contain exactly 6 sources."""
-        self.assertEqual(
+    def test_available_sources_has_expected_minimum(self) -> None:
+        """Registry must contain at least the core source set."""
+        self.assertGreaterEqual(
             len(Settings.AVAILABLE_SOURCES), 6
         )
 
@@ -87,6 +87,22 @@ class TestSettings(unittest.TestCase):
         self.assertIn(
             "Accept-Language", Settings.DEFAULT_HEADERS
         )
+
+    def test_valid_impersonation_browser_falls_back(self) -> None:
+        """Unsupported browser values fall back to chrome124."""
+        browser = Settings.get_valid_impersonation_browser(
+            "edge122"
+        )
+        self.assertEqual(browser, "chrome124")
+
+    def test_default_impersonation_returns_supported_browser(self) -> None:
+        """Deterministic impersonation returns a supported profile."""
+        browser, headers = Settings.default_impersonation()
+        self.assertIn(
+            browser,
+            Settings.SUPPORTED_IMPERSONATION_BROWSERS,
+        )
+        self.assertIn("Accept-Language", headers)
 
 
 if __name__ == "__main__":

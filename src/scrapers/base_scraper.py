@@ -13,6 +13,7 @@ import cloudscraper  # type: ignore[import-untyped]
 from bs4 import BeautifulSoup
 from curl_cffi import requests as curl_requests
 from curl_cffi.requests import BrowserTypeLiteral
+from curl_cffi.requests.exceptions import ImpersonateError
 
 from src.config.settings import Settings
 from src.models.product import Product
@@ -29,14 +30,13 @@ class BaseScraper(ABC):
         self.settings = Settings()
         self.selectors: dict[str, str] = self._load_selectors()
 
-        # Random browser fingerprint per scraper instance
-        browser, self._session_headers = (
-            Settings.random_impersonation()
-        )
+        # Stable browser fingerprint per scraper instance.
+        browser, self._session_headers = Settings.default_impersonation()
         self._impersonate: BrowserTypeLiteral = browser
         self.session = curl_requests.Session(
             impersonate=self._impersonate
         )
+        self._last_error_non_retryable: bool = False
 
         self._current_delay: float = (
             self.settings.REQUEST_DELAY
@@ -172,6 +172,7 @@ class BaseScraper(ABC):
         """GET with retries, adaptive delay, and circuit breaker."""
         if self._check_circuit():
             return None
+        self._last_error_non_retryable = False
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.get(
@@ -195,13 +196,26 @@ class BaseScraper(ABC):
                 if resp.status_code in (429, 403):
                     self._escalate_delay()
                     time.sleep(self._current_delay)
+            except ImpersonateError as exc:
+                self._last_error_non_retryable = True
+                self.logger.error(
+                    "[%s] Non-retryable impersonation error: %s",
+                    self.source_name,
+                    exc,
+                    exc_info=True,
+                )
+                self._record_failure()
+                return None
             except Exception as exc:
+                is_last_attempt = (
+                    attempt == self.settings.MAX_RETRIES - 1
+                )
                 self.logger.warning(
                     "[%s] Request error on attempt %d: %s",
                     self.source_name,
                     attempt + 1,
                     exc,
-                    exc_info=True,
+                    exc_info=is_last_attempt,
                 )
                 time.sleep(
                     self._current_delay * (attempt + 1)
@@ -218,6 +232,7 @@ class BaseScraper(ABC):
         """POST with retries, adaptive delay, and circuit breaker."""
         if self._check_circuit():
             return None
+        self._last_error_non_retryable = False
         for attempt in range(self.settings.MAX_RETRIES):
             try:
                 resp = self.session.post(
@@ -242,18 +257,69 @@ class BaseScraper(ABC):
                 if resp.status_code in (429, 403):
                     self._escalate_delay()
                     time.sleep(self._current_delay)
+            except ImpersonateError as exc:
+                self._last_error_non_retryable = True
+                self.logger.error(
+                    "[%s] Non-retryable impersonation error: %s",
+                    self.source_name,
+                    exc,
+                    exc_info=True,
+                )
+                self._record_failure()
+                return None
             except Exception as exc:
+                is_last_attempt = (
+                    attempt == self.settings.MAX_RETRIES - 1
+                )
                 self.logger.warning(
                     "[%s] Request error on attempt %d: %s",
                     self.source_name,
                     attempt + 1,
                     exc,
-                    exc_info=True,
+                    exc_info=is_last_attempt,
                 )
                 time.sleep(
                     self._current_delay * (attempt + 1)
                 )
         self._record_failure()
+        return None
+
+    def _fetch_cloudscraper_html(
+        self,
+        url: str,
+        headers: dict[str, str],
+    ) -> str | None:
+        """Fetch a page with cloudscraper using bounded retries."""
+        _cs: Any = cloudscraper
+        scraper: Any = _cs.create_scraper()
+        for attempt in range(self.settings.MAX_RETRIES):
+            try:
+                response: Any = scraper.get(
+                    url,
+                    headers=headers,
+                    timeout=self._request_timeout,
+                )
+                status_code = int(response.status_code)
+                if status_code == 200:
+                    return str(response.text)
+                self.logger.warning(
+                    "[%s] cloudscraper HTTP %d on attempt %d",
+                    self.source_name,
+                    status_code,
+                    attempt + 1,
+                )
+            except Exception as exc:
+                is_last_attempt = (
+                    attempt == self.settings.MAX_RETRIES - 1
+                )
+                self.logger.warning(
+                    "[%s] cloudscraper error on attempt %d: %s",
+                    self.source_name,
+                    attempt + 1,
+                    exc,
+                    exc_info=is_last_attempt,
+                )
+            time.sleep(self._current_delay * (attempt + 1))
         return None
 
     def _get_page(self, url: str) -> BeautifulSoup | None:
@@ -272,22 +338,23 @@ class BaseScraper(ABC):
             return BeautifulSoup(resp.text, "lxml")
 
         # Fallback: cloudscraper (JS challenge solver)
-        self.logger.info(
-            "[%s] curl_cffi exhausted, falling back to cloudscraper",
-            self.source_name,
-        )
-        try:
-            _cs: Any = cloudscraper
-            scraper: Any = _cs.create_scraper()
-            fallback_resp: Any = scraper.get(
-                url,
-                headers=headers,
-                timeout=self._request_timeout,
+        if self._last_error_non_retryable:
+            self.logger.info(
+                "[%s] Non-retryable curl_cffi failure, "
+                "falling back to cloudscraper",
+                self.source_name,
             )
-            if fallback_resp.status_code == 200:
-                return BeautifulSoup(
-                    str(fallback_resp.text), "lxml"
-                )
+        else:
+            self.logger.info(
+                "[%s] curl_cffi exhausted, falling back to cloudscraper",
+                self.source_name,
+            )
+        try:
+            fallback_html = self._fetch_cloudscraper_html(
+                url, headers
+            )
+            if fallback_html:
+                return BeautifulSoup(fallback_html, "lxml")
         except Exception as e:
             self.logger.error(
                 "[%s] cloudscraper fallback also failed: %s",
