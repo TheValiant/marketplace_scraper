@@ -27,22 +27,21 @@
         "next_page": "a.pagination-next"
     },
     "carrefour": {
-        "product_card": "a[data-testid='hf_product']",
-        "title": "span[data-testid='hf_product_name']",
-        "price": "span[data-testid='hf_product_price']",
+        "product_card": "",
+        "title": "",
+        "price": "",
         "currency": "",
         "rating": "",
-        "url": "a[data-testid='hf_product']",
+        "url": "",
         "next_page": ""
     },
     "sephora": {
-        "product_card": "div.grid-tile",
-        "title": "a.link.product-name",
-        "brand": "a.link.product-brand",
-        "price": "span.value",
+        "product_card": "",
+        "title": "",
+        "price": "",
         "currency": "",
         "rating": "",
-        "url": "a.link.product-name",
+        "url": "",
         "next_page": ""
     },
     "lulu": {

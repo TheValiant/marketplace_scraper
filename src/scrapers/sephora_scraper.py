@@ -1,21 +1,30 @@
 # src/scrapers/sephora_scraper.py
 
-"""Scraper for sephora.me (UAE) using Demandware HTML product grids."""
+"""Scraper for sephora.me (UAE) via RSC flight-data extraction."""
 
+import json
+import re
 import urllib.parse
-
-from bs4 import Tag
+from typing import Any, cast
 
 from src.models.product import Product
 from src.scrapers.base_scraper import BaseScraper
+
+# Extracts the string payload from each RSC push call
+_RSC_PUSH_RE = re.compile(
+    r'self\.__next_f\.push\(\[1,"(.*?)"\]\)',
+    re.DOTALL,
+)
+
+# Locates the products JSON array inside RSC data
+_PRODUCTS_KEY = '"products":[{"productId"'
 
 
 class SephoraScraper(BaseScraper):
     """Scraper for Sephora UAE (Beauty).
 
-    Parses Salesforce Commerce Cloud (Demandware) HTML
-    product grids.  Extracts brand and product name
-    separately to build accurate titles.
+    Extracts product data from React Server Component
+    (RSC) flight payload embedded in the HTML response.
 
     Note: ``sephora.ae`` redirects to ``sephora.me``.
     """
@@ -35,71 +44,138 @@ class SephoraScraper(BaseScraper):
         return f"{self.BASE_URL}/ae-en/"
 
     # ----------------------------------------------------------
-    # Card parsing
+    # RSC flight-data helpers
     # ----------------------------------------------------------
 
-    def _parse_card(self, card: Tag) -> Product:
-        """Parse a Demandware product tile into a Product."""
-        # Sephora splits Brand and Product Name
-        brand_el = card.select_one(
-            self.selectors.get(
-                "brand", "a.link.product-brand"
+    @staticmethod
+    def _unescape_rsc(html: str) -> str:
+        """Extract and unescape RSC push payloads."""
+        chunks: list[str] = []
+        for match in _RSC_PUSH_RE.finditer(html):
+            raw = match.group(1)
+            unescaped = (
+                raw.replace('\\"', '"')
+                .replace("\\n", "\n")
+                .replace("\\\\", "\\")
             )
-        )
-        name_el = card.select_one(
-            self.selectors.get("title", "")
+            chunks.append(unescaped)
+        return "".join(chunks)
+
+    @staticmethod
+    def _find_products(
+        rsc_text: str,
+    ) -> list[dict[str, Any]]:
+        """Find and parse the products JSON array."""
+        idx = rsc_text.find(_PRODUCTS_KEY)
+        if idx == -1:
+            return []
+        arr_start = rsc_text.index("[", idx)
+        decoder = json.JSONDecoder()
+        try:
+            parsed: object
+            parsed, _ = decoder.raw_decode(
+                rsc_text, arr_start,
+            )
+        except (json.JSONDecodeError, ValueError):
+            return []
+        if not isinstance(parsed, list):
+            return []
+        return cast(
+            list[dict[str, Any]], parsed,
         )
 
-        brand = (
-            brand_el.get_text(strip=True)
-            if brand_el
-            else ""
+    def _map_product(
+        self, obj: dict[str, Any],
+    ) -> Product | None:
+        """Map a single product dict to a Product."""
+        product_id = str(
+            obj.get("productId", ""),
         )
-        name = (
-            name_el.get_text(strip=True)
-            if name_el
-            else ""
-        )
-        full_title = (
-            f"{brand} - {name}".strip(" -") or "N/A"
+        name = str(
+            obj.get("productName", ""),
+        ).strip()
+        if not name:
+            return None
+
+        price = float(obj.get("c_price", 0) or 0)
+
+        # Brand (inline object with id/name)
+        brand = ""
+        brand_obj: object = obj.get("c_brand", "")
+        if isinstance(brand_obj, dict):
+            bd = cast(dict[str, Any], brand_obj)
+            brand = str(
+                bd.get(
+                    "name", bd.get("id", ""),
+                )
+            )
+        elif isinstance(brand_obj, str):
+            brand = brand_obj
+
+        title = (
+            f"{brand} - {name}".strip(" -")
+            if brand
+            else name
         )
 
-        # Price
-        price_el = card.select_one(
-            self.selectors.get("price", "")
+        # Image (inline object with disBaseLink)
+        image_url = ""
+        image_obj: object = obj.get("image", "")
+        if isinstance(image_obj, dict):
+            im = cast(dict[str, Any], image_obj)
+            image_url = str(
+                im.get(
+                    "disBaseLink",
+                    im.get("link", ""),
+                )
+            )
+
+        # Rating
+        rating_val = obj.get(
+            "c_bvAverageRating", "",
         )
-        price_val = self.extract_price(
-            price_el.get_text() if price_el else ""
+        rating = (
+            str(rating_val) if rating_val else ""
         )
 
         # URL
-        url_el = card.select_one(
-            self.selectors.get("url", "")
+        slug = re.sub(
+            r'[^a-z0-9]+', '-', name.lower(),
+        ).strip('-')
+        url = (
+            f"{self.BASE_URL}/ae-en/p/"
+            f"{slug}/{product_id}"
         )
-        href = ""
-        if url_el:
-            raw_href = url_el.get("href", "")
-            href = str(raw_href) if raw_href else ""
-            if href and not href.startswith("http"):
-                href = f"{self.BASE_URL}{href}"
-
-        # Image
-        img_el = card.select_one("img")
-        image_url = ""
-        if img_el:
-            raw_src = img_el.get("src", "")
-            image_url = (
-                str(raw_src) if raw_src else ""
-            )
 
         return Product(
-            title=full_title,
-            price=price_val,
+            title=title,
+            price=price,
             currency="AED",
-            url=href,
+            rating=rating,
+            url=url,
             source="sephora",
             image_url=image_url,
         )
+
+    def _extract_products(
+        self, html: str,
+    ) -> list[Product]:
+        """Extract all products from RSC flight data."""
+        rsc_text = self._unescape_rsc(html)
+        raw_items = self._find_products(rsc_text)
+        products: list[Product] = []
+        seen_ids: set[str] = set()
+
+        for item in raw_items:
+            pid = str(item.get("productId", ""))
+            if pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            product = self._map_product(item)
+            if product is not None:
+                products.append(product)
+
+        return products
 
     # ----------------------------------------------------------
     # Public search entry-point
@@ -110,6 +186,14 @@ class SephoraScraper(BaseScraper):
         try:
             products: list[Product] = []
             encoded = urllib.parse.quote_plus(query)
+            headers: dict[str, str] = {
+                **self._session_headers,
+                "Accept": (
+                    "text/html,application/xhtml+xml,"
+                    "application/xml;q=0.9,*/*;q=0.8"
+                ),
+                "Referer": self._get_homepage(),
+            }
 
             for page in range(self.settings.MAX_PAGES):
                 start_offset = page * self._PAGE_SIZE
@@ -124,24 +208,22 @@ class SephoraScraper(BaseScraper):
                     start_offset,
                 )
 
-                soup = self._get_page(url)
-                if not soup:
+                self._wait()
+                resp = self._fetch_get(url, headers)
+                if resp is None:
                     break
 
-                card_sel = self.selectors.get(
-                    "product_card", "div.grid-tile"
+                page_products = self._extract_products(
+                    resp.text,
                 )
-                cards = soup.select(card_sel)
-                if not cards:
+                if not page_products:
                     break
 
-                for card in cards:
-                    parsed = self._parse_card(card)
-                    if parsed.title != "N/A":
-                        products.append(parsed)
+                products.extend(page_products)
 
-                # Stop if fewer results than page size
-                if len(cards) < self._PAGE_SIZE:
+                if (
+                    len(page_products) < self._PAGE_SIZE
+                ):
                     break
 
             return products
